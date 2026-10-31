@@ -151,8 +151,25 @@ public class ChatActivity extends Activity {
         @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
             if (chooser != null) chooser.onReceiveValue(null);
             chooser = cb;
-            try { startActivityForResult(p.createIntent(), REQ_FILE); }
-            catch (ActivityNotFoundException e) { chooser = null; return false; }
+            Intent i;
+            try {
+                i = p.createIntent();
+            } catch (Exception e) {
+                i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            }
+            if (p.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            try {
+                startActivityForResult(i, REQ_FILE);
+            } catch (ActivityNotFoundException e) {
+                try {
+                    startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT)
+                            .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_FILE);
+                } catch (ActivityNotFoundException e2) {
+                    chooser = null;
+                    Toast.makeText(ChatActivity.this, "No file picker available", Toast.LENGTH_LONG).show();
+                    return false;
+                }
+            }
             return true;
         }
 
@@ -184,10 +201,20 @@ public class ChatActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int code, int result, Intent data) {
-        if (code == REQ_FILE && chooser != null) {
-            chooser.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
-            chooser = null;
+        if (code != REQ_FILE || chooser == null) return;
+        Uri[] files = null;
+        if (result == RESULT_OK && data != null) {
+            files = WebChromeClient.FileChooserParams.parseResult(result, data);
+            if (files == null && data.getData() != null) files = new Uri[]{data.getData()};
+            if (files != null) {
+                for (Uri u : files) {       // keep read access for the whole upload (large videos take a while)
+                    try { getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+                    catch (Exception ignored) { }
+                }
+            }
         }
+        chooser.onReceiveValue(files);
+        chooser = null;
     }
 
     // ------------------------------------------------------------ downloads (WhatsApp uses blob: URLs)
@@ -204,16 +231,28 @@ public class ChatActivity extends Activity {
                 + "');};r.readAsDataURL(x.response);};x.send();})()", null);
     }
 
-    private class Bridge {
-        @JavascriptInterface public void view(String v) {
-            runOnUiThread(() -> {
-                navBar.setVisibility(mode == 0 && "list".equals(v) ? android.view.View.VISIBLE : android.view.View.GONE);
-                // inside a conversation WhatsApp's own header is used, like the phone app: hide ours
-                if (getActionBar() != null) {
-                    if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
-                }
-            });
+    private String lastView = "";
+    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable noneTask = () -> applyView("none");
+
+    private void setView(String v) {
+        if ("none".equals(v)) { uiHandler.postDelayed(noneTask, 900); return; }   // transient while WhatsApp re-renders
+        uiHandler.removeCallbacks(noneTask);
+        applyView(v);
+    }
+
+    /** Only acts when the view really changes: each show/hide of the bars resizes the page. */
+    private void applyView(String v) {
+        if (v.equals(lastView)) return;
+        lastView = v;
+        navBar.setVisibility(mode == 0 && "list".equals(v) ? View.VISIBLE : View.GONE);
+        if (getActionBar() != null) {
+            if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
         }
+    }
+
+    private class Bridge {
+        @JavascriptInterface public void view(String v) { runOnUiThread(() -> setView(v)); }
 
         @JavascriptInterface public void save(String b64, String mime, String name) {
             try {
