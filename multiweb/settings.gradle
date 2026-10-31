@@ -1,0 +1,4 @@
+pluginManagement { repositories { google(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositories { google() } }
+rootProject.name = "MultiWeb"
+include ':app'
