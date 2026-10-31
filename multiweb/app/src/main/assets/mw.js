@@ -1,33 +1,65 @@
-/* Phone mode for WhatsApp Web: show ONE pane at a time (chat list OR conversation) so it fits the screen. */
+/* Phone mode for WhatsApp Web: show ONE pane at a time (chat list OR conversation) so it fits the screen.
+   Panes are found by structure (the flex row that holds #side), not by size, because at phone width the
+   original layout squeezes every pane to a few dozen pixels. */
 (function () {
   if (window.__mw) { window.__mw.refresh(); return; }
   var style = document.createElement('style');
   style.id = 'mw-style';
   document.head.appendChild(style);
 
-  var sideBlock = null, rightBlock = null, forceList = false, lastChatOpen = false, timer = null;
-  var backBtn = null;
+  var row = null, list = null, right = null, rails = [], forceList = false, lastChatOpen = false, timer = null, backBtn = null;
 
-  function attached(n) { return n && document.documentElement.contains(n); }
+  function attached(n) { return !!n && document.documentElement.contains(n); }
 
-  // The two panes are the sibling blocks that contain #side (chat list) and the conversation/intro area.
-  function findBlocks() {
-    var side = document.getElementById('side');
-    if (!side) return false;
-    var n = side;
-    while (n.parentElement && n.parentElement !== document.body) {
-      var p = n.parentElement;
-      var sibs = Array.prototype.filter.call(p.children, function (c) {
-        return c !== n && c.offsetWidth > 150 && c.offsetHeight > 150;
-      });
-      if (sibs.length >= 1) { sideBlock = n; rightBlock = sibs[0]; return true; }
-      n = p;
+  function kidsOf(n) {
+    return Array.prototype.filter.call(n.children, function (c) {
+      var t = c.tagName;
+      return t !== 'SCRIPT' && t !== 'STYLE' && t !== 'LINK' && c.id !== 'mw-back' && c.id !== 'mw-style';
+    });
+  }
+  function big(k) { return k.offsetWidth > 30 && k.offsetHeight > 100; }
+  function area(k) { return k.offsetWidth * k.offsetHeight; }
+
+  // Top-most horizontal flex/grid row with at least two sizeable children.
+  function findRow() {
+    var n = document.getElementById('app') || document.body, guard = 0;
+    while (n && guard++ < 14) {
+      var ks = kidsOf(n);
+      if (!ks.length) break;
+      var cs = getComputedStyle(n);
+      var rowLike = ((cs.display === 'flex' || cs.display === 'inline-flex') && cs.flexDirection.indexOf('row') === 0) ||
+                    cs.display === 'grid';
+      if (rowLike && ks.filter(big).length >= 2) return n;
+      n = ks.reduce(function (a, b) { return area(a) >= area(b) ? a : b; });
     }
-    return false;
+    // fallback: climb from #side to the first ancestor that has a sizeable sibling
+    var s = document.getElementById('side'), c = s;
+    while (c && c.parentElement && c.parentElement !== document.body) {
+      var p = c.parentElement;
+      if (kidsOf(p).some(function (k) { return k !== c && big(k); })) return p;
+      c = p;
+    }
+    return null;
+  }
+
+  function detect() {
+    row = findRow();
+    list = right = null; rails = [];
+    if (!row) return false;
+    var side = document.getElementById('side');
+    var kids = kidsOf(row).filter(function (k) { return k.offsetWidth > 0 || k.offsetHeight > 0; });
+    if (kids.length < 2) return false;
+    kids.forEach(function (k) { if (side && k.contains(side)) list = k; });
+    if (!list) list = kids.slice(0, -1).reduce(function (a, b) { return area(a) >= area(b) ? a : b; });
+    var after = kids.slice(kids.indexOf(list) + 1);
+    right = after.length ? after[after.length - 1] : null;
+    if (!right) return false;
+    rails = kids.filter(function (k) { return k !== list && k !== right; });
+    return true;
   }
 
   function ensureBackBtn() {
-    if (backBtn && attached(backBtn)) return backBtn;
+    if (attached(backBtn)) return backBtn;
     backBtn = document.createElement('div');
     backBtn.id = 'mw-back';
     backBtn.textContent = '‹';
@@ -37,28 +69,37 @@
   }
 
   function apply() {
-    if (!(attached(sideBlock) && attached(rightBlock))) {
-      style.textContent = '';                 // measure the original layout again
-      sideBlock = rightBlock = null;
-      if (!findBlocks()) return;
+    if (!(attached(row) && attached(list) && attached(right))) {
+      style.textContent = '';                       // measure the original layout again
+      Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-in]'), function (e) {
+        e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-in');
+      });
+      if (!detect()) return;
     }
     var chatOpen = !!document.getElementById('main');
-    if (chatOpen && !lastChatOpen) forceList = false;   // a chat was just opened
+    if (chatOpen && !lastChatOpen) forceList = false;     // a chat was just opened
     lastChatOpen = chatOpen;
     var showChat = chatOpen && !forceList;
 
-    sideBlock.setAttribute('data-mw', 'side');
-    rightBlock.setAttribute('data-mw', 'right');
-    // every ancestor up to <body> must be allowed to shrink to the phone width
-    for (var a = sideBlock.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
+    row.setAttribute('data-mw', 'row');
+    list.setAttribute('data-mw', 'list');
+    right.setAttribute('data-mw', 'right');
+    rails.forEach(function (r) { r.setAttribute('data-mw', 'rail'); });
+    for (var a = row.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
+    var side = document.getElementById('side');
+    for (var i = side; i && i !== row && i !== list.parentElement; i = i.parentElement) i.setAttribute('data-mw-in', '1');
     document.documentElement.setAttribute('data-mw-view', showChat ? 'chat' : 'list');
     ensureBackBtn().style.display = showChat ? 'flex' : 'none';
 
     style.textContent =
-      'html,body{min-width:0!important;width:100%!important;max-width:100vw!important;overflow-x:hidden!important}' +
+      'html,body,#app{min-width:0!important;max-width:100vw!important;overflow-x:hidden!important}' +
       '[data-mw-anc]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
-      '[data-mw]{width:100%!important;max-width:100vw!important;min-width:0!important;flex:1 1 100%!important}' +
-      'html[data-mw-view=chat] [data-mw=side]{display:none!important}' +
+      '[data-mw=row]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
+      '[data-mw=rail]{flex:0 0 auto!important}' +
+      '[data-mw=list]{flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
+      '[data-mw=right]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important}' +
+      '[data-mw-in]{min-width:0!important;max-width:100%!important}' +
+      'html[data-mw-view=chat] [data-mw=list],html[data-mw-view=chat] [data-mw=rail]{display:none!important}' +
       'html[data-mw-view=list] [data-mw=right]{display:none!important}' +
       '#mw-back{position:fixed;left:0;top:10px;width:30px;height:46px;z-index:2147483647;display:none;' +
       'align-items:center;justify-content:center;font:700 30px/1 sans-serif;color:#fff;' +
@@ -68,20 +109,35 @@
   function schedule() { clearTimeout(timer); timer = setTimeout(apply, 80); }
 
   function back() {
-    var v = document.documentElement.getAttribute('data-mw-view');
-    if (v === 'chat') { forceList = true; apply(); return true; }
+    if (document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; apply(); return true; }
     return false;
+  }
+
+  function describe(n) {
+    if (!n) return '(none)';
+    var c = typeof n.className === 'string' ? n.className.split(' ')[0] : '';
+    return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (c ? '.' + c : '') + ' ' + n.offsetWidth + 'x' + n.offsetHeight;
+  }
+  function debug() {
+    var out = ['viewport ' + window.innerWidth + 'x' + window.innerHeight, 'row: ' + describe(row),
+               'list: ' + describe(list), 'right: ' + describe(right),
+               'rails: ' + (rails.map(describe).join(' | ') || '(none)'),
+               'view: ' + document.documentElement.getAttribute('data-mw-view'),
+               'has #side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'),
+               'row children:'];
+    if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    return out.join('\n');
   }
 
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   // tapping a chat in the list always switches to the conversation, even if it is already the open one
   document.addEventListener('click', function (e) {
-    if (attached(sideBlock) && sideBlock.contains(e.target) && e.target.closest && e.target.closest('#pane-side')) {
+    if (attached(list) && list.contains(e.target) && e.target.closest && e.target.closest('#pane-side')) {
       forceList = false;
       setTimeout(apply, 60);
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back };
+  window.__mw = { refresh: apply, back: back, debug: debug };
   apply();
 })();

@@ -286,6 +286,7 @@ public class ChatActivity extends Activity {
         m.add(0, 1, 0, "Reload");
         m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
         m.add(0, 6, 1, "Show chat list");
+        m.add(0, 7, 5, "Layout diagnostics");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
         m.add(0, 3, 4, "Log out & clear this account");
@@ -303,6 +304,20 @@ public class ChatActivity extends Activity {
                 applySettings();
                 web.reload();
                 invalidateOptionsMenu();
+                return true;
+            case 7:
+                web.evaluateJavascript("window.__mw?window.__mw.debug():'Phone-mode script is not running on this page'", r -> {
+                    String t;
+                    try { t = String.valueOf(new org.json.JSONTokener(r).nextValue()); } catch (Exception e) { t = r; }
+                    android.widget.TextView tv = new android.widget.TextView(this);
+                    tv.setText(t);
+                    tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+                    tv.setTextSize(12);
+                    tv.setTextIsSelectable(true);
+                    tv.setPadding(40, 30, 40, 10);
+                    new AlertDialog.Builder(this).setTitle("Layout diagnostics").setView(tv)
+                            .setPositiveButton("Close", null).show();
+                });
                 return true;
             case 6:
                 web.evaluateJavascript("window.__mw&&window.__mw.back()", null);
