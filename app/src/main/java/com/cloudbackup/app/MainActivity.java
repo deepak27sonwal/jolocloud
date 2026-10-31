@@ -22,7 +22,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     private EditText url, anon, email, password;
-    private CheckBox photos, videos, contacts, auto;
+    private CheckBox photos, videos, contacts, auto, compress;
     private TextView summary, log;
     private Settings st;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
 
         label(root, "What to back up");
         photos = check(root, "Photos", st.photos());
+        compress = check(root, "Compress photos to WebP (smaller, faster uploads)", st.compress());
         videos = check(root, "Videos", st.videos());
         contacts = check(root, "Contacts", st.contacts());
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
@@ -114,6 +115,7 @@ public class MainActivity extends Activity {
         saveConn();
         st.p.edit()
                 .putBoolean("photos", photos.isChecked())
+                .putBoolean("compress", compress.isChecked())
                 .putBoolean("videos", videos.isChecked())
                 .putBoolean("contacts", contacts.isChecked())
                 .putBoolean("auto", auto.isChecked())

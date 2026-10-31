@@ -5,6 +5,11 @@ import android.content.ContentUris;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
+import android.os.Build;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.ContactsContract;
@@ -13,6 +18,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,6 +42,9 @@ final class BackupEngine {
     private final Set<String> done = new HashSet<>();
     private volatile boolean cancelled;
     private int uploaded, failed;
+    private long bytesOriginal, bytesSent;
+    private static final int MAX_EDGE = 2048;   // longest side after downscale
+    private static final int WEBP_QUALITY = 80;
 
     BackupEngine(Context c) {
         ctx = c.getApplicationContext();
@@ -63,7 +72,8 @@ final class BackupEngine {
         } finally {
             Status.running = false;
         }
-        String r = (cancelled ? "Stopped. " : "Done. ") + uploaded + " uploaded, " + failed + " failed.";
+        String r = (cancelled ? "Stopped. " : "Done. ") + uploaded + " uploaded, " + failed + " failed."
+                + (bytesOriginal > 0 ? String.format(Locale.US, " Sent %.1f MB instead of %.1f MB.", bytesSent / 1e6, bytesOriginal / 1e6) : "");
         Status.summary = r;
         Status.log(r);
         return failed == 0 && !cancelled;
@@ -88,7 +98,7 @@ final class BackupEngine {
     private void backupMedia(Uri collection, String folder) {
         String[] cols = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED,
-                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME};
+                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE};
         int total = 0, n = 0;
         try (Cursor c = cr.query(collection, cols, null, null, MediaStore.MediaColumns.DATE_ADDED + " ASC")) {
             if (c == null) { Status.log("Cannot read " + folder + " (permission?)"); return; }
@@ -99,25 +109,99 @@ final class BackupEngine {
                 String name = c.getString(1) == null ? "file" : c.getString(1);
                 long size = c.getLong(2), mod = c.getLong(3);
                 String album = c.getString(4) == null ? "Other" : c.getString(4);
+                String mime = c.getString(5) == null ? "" : c.getString(5);
                 String ident = folder + ":" + id + ":" + size + ":" + mod;
                 n++;
                 if (done.contains(ident)) continue;
                 String key = folder + "/" + clean(album) + "/" + id + "_" + clean(name);
                 Uri uri = ContentUris.withAppendedId(collection, id);
-                try (ParcelFileDescriptor pfd = cr.openFileDescriptor(uri, "r");
-                     InputStream in = new FileInputStream(pfd.getFileDescriptor())) {
+                boolean squeeze = folder.equals("photos") && st.compress()
+                        && (mime.equals("image/jpeg") || mime.equals("image/png") || mime.equals("image/heic")
+                            || mime.equals("image/heif"));
+                File tmp = null;
+                try {
                     Status.summary = "Uploading " + folder + " " + n + "/" + total;
-                    s3.put(key, in, pfd.getStatSize());
+                    if (squeeze) tmp = compress(uri);
+                    if (tmp != null && tmp.length() < size) {
+                        int dot = key.lastIndexOf('.');
+                        String wkey = (dot > key.lastIndexOf('/') ? key.substring(0, dot) : key) + ".webp";
+                        try (InputStream in = new FileInputStream(tmp)) {
+                            s3.put(wkey, in, tmp.length(), "image/webp");
+                        }
+                        bytesSent += tmp.length();
+                    } else {
+                        try (ParcelFileDescriptor pfd = cr.openFileDescriptor(uri, "r");
+                             InputStream in = new FileInputStream(pfd.getFileDescriptor())) {
+                            s3.put(key, in, pfd.getStatSize());
+                            bytesSent += pfd.getStatSize();
+                        }
+                    }
+                    bytesOriginal += size;
                     markDone(ident);
                     uploaded++;
                 } catch (Exception e) {
                     failed++;
                     Status.log("Failed " + name + ": " + e.getMessage());
+                } finally {
+                    if (tmp != null) tmp.delete();
                 }
             }
         } catch (SecurityException e) {
             Status.log("No permission to read " + folder);
             failed++;
+        }
+    }
+
+    /** Decodes, downsizes (longest side MAX_EDGE), fixes rotation and writes WebP. Null if not possible. */
+    private File compress(Uri uri) {
+        try {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            try (InputStream in = cr.openInputStream(uri)) { BitmapFactory.decodeStream(in, null, o); }
+            if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= MAX_EDGE) sample *= 2;
+            o.inJustDecodeBounds = false;
+            o.inSampleSize = sample;
+            Bitmap bmp;
+            try (InputStream in = cr.openInputStream(uri)) { bmp = BitmapFactory.decodeStream(in, null, o); }
+            if (bmp == null) return null;
+
+            int w = bmp.getWidth(), h = bmp.getHeight();
+            float scale = Math.min(1f, (float) MAX_EDGE / Math.max(w, h));
+            Matrix m = new Matrix();
+            if (scale < 1f) m.postScale(scale, scale);
+            int rot = rotation(uri);
+            if (rot != 0) m.postRotate(rot);
+            if (!m.isIdentity()) {
+                Bitmap t = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
+                if (t != bmp) { bmp.recycle(); bmp = t; }
+            }
+            File f = File.createTempFile("img", ".webp", ctx.getCacheDir());
+            Bitmap.CompressFormat fmt = Build.VERSION.SDK_INT >= 30
+                    ? Bitmap.CompressFormat.WEBP_LOSSY : Bitmap.CompressFormat.WEBP;
+            try (FileOutputStream out = new FileOutputStream(f)) {
+                bmp.compress(fmt, WEBP_QUALITY, out);
+            }
+            bmp.recycle();
+            return f;
+        } catch (Exception | OutOfMemoryError e) {
+            return null; // fall back to uploading the original
+        }
+    }
+
+    private int rotation(Uri uri) {
+        try (InputStream in = cr.openInputStream(uri)) {
+            int o = new ExifInterface(in).getAttributeInt(ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL);
+            switch (o) {
+                case ExifInterface.ORIENTATION_ROTATE_90: return 90;
+                case ExifInterface.ORIENTATION_ROTATE_180: return 180;
+                case ExifInterface.ORIENTATION_ROTATE_270: return 270;
+                default: return 0;
+            }
+        } catch (Exception e) {
+            return 0;
         }
     }
 

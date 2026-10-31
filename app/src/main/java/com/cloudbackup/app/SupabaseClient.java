@@ -63,6 +63,10 @@ final class SupabaseClient {
     // ------------------------------------------------------------ storage
     /** Uploads length bytes to <uid>/<key>. A file that already exists counts as success. */
     void put(String key, InputStream in, long length) throws IOException {
+        put(key, in, length, null);
+    }
+
+    void put(String key, InputStream in, long length, String contentType) throws IOException {
         ensureSession();
         StringBuilder path = new StringBuilder("/storage/v1/object/").append(enc(st.bucket()))
                 .append('/').append(enc(st.uid()));
@@ -75,7 +79,7 @@ final class SupabaseClient {
             c.setReadTimeout(120000);
             c.setRequestProperty("apikey", anon);
             c.setRequestProperty("Authorization", "Bearer " + st.access());
-            c.setRequestProperty("Content-Type", "application/octet-stream");
+            c.setRequestProperty("Content-Type", contentType == null ? "application/octet-stream" : contentType);
             c.setDoOutput(true);
             c.setFixedLengthStreamingMode(length);
             try (OutputStream out = c.getOutputStream()) {

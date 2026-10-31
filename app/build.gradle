@@ -10,6 +10,9 @@ android {
         versionCode 1
         versionName '1.0'
     }
+    signingConfigs {
+        debug { enableV1Signing = true; enableV2Signing = true; enableV3Signing = true }
+    }
     buildTypes {
         release { minifyEnabled false }
     }
