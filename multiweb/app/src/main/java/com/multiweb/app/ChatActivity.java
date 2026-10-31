@@ -332,21 +332,26 @@ public class ChatActivity extends Activity {
                 chatsBadge.setBackground(bg);
                 chatsBadge.setVisibility(android.view.View.GONE);
                 android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(-2,
-                        (int) (18 * d), android.view.Gravity.CENTER);
-                bp.setMargins((int) (26 * d), (int) (-22 * d), 0, 0);
+                        (int) (18 * d), android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
+                bp.setMargins((int) (30 * d), (int) (-6 * d), 0, 0);
                 top.addView(chatsBadge, bp);
             }
             item.addView(top, new android.widget.LinearLayout.LayoutParams(-1, (int) (32 * d)));
             android.widget.TextView label = new android.widget.TextView(this);
             label.setText(TAB_LABELS[i]);
+            label.setGravity(android.view.Gravity.CENTER);
             label.setTextSize(12);
             label.setPadding(0, (int) (4 * d), 0, 0);
-            item.addView(label);
+            item.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
             navPill[i] = pill; navIcon[i] = icon; navLabel[i] = label;
             item.setOnClickListener(v -> {
                 activeTab = idx;
                 paintNav();
-                web.evaluateJavascript("window.__mw&&window.__mw.nav('" + TABS[idx] + "')", null);
+                web.evaluateJavascript("window.__mw?String(window.__mw.nav('" + TABS[idx] + "')):'nojs'", r -> {
+                    if (r != null && !r.contains("true"))
+                        Toast.makeText(this, TAB_LABELS[idx] + " is not available on this page yet. Check Layout diagnostics.",
+                                Toast.LENGTH_LONG).show();
+                });
             });
             bar.addView(item, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
         }

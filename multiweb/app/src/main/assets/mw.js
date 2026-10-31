@@ -74,7 +74,8 @@
     row = findRow();
     kids0 = [];
     if (!row) return false;
-    kids0 = kidsOf(row).filter(function (k) { return k.offsetWidth > 0 && k.offsetHeight > 100; });
+    // full-height children count even when squeezed to zero width (flex rows stretch every child to the row height)
+    kids0 = kidsOf(row).filter(function (k) { return k.offsetHeight > 100; });
     return kids0.length >= 2;
   }
 
@@ -302,25 +303,66 @@
     return true;
   }
 
-  var NAV = {
-    chats: ['[aria-label="Chats"]', '[data-icon^="chats"]', '[data-icon="chat"]'],
-    updates: ['[aria-label="Updates"]', '[aria-label="Status"]', '[data-icon^="status"]', '[data-icon^="updates"]'],
-    communities: ['[aria-label="Communities"]', '[data-icon^="community"]', '[data-icon^="communities"]'],
-    calls: ['[aria-label="Calls"]', '[data-icon^="call"]'],
-    settings: ['[aria-label="Settings"]', '[data-icon^="settings"]']
+  // ---------------------------------------------------------------- bottom-bar navigation
+  // Finds WhatsApp's own tab button by what it is called (aria-label, title, test id, icon name or visible text),
+  // wherever it lives on the page (the icon strip is hidden in phone mode, but hidden buttons still work).
+  var TABS = {
+    chats:       { exact: /^(chats?|chat list|all chats)$/, loose: /^chats?\b/, icon: /^(chats?|chat-outline|chats-outline|chats-filled)/, not: /new|archived|select|starred/ },
+    updates:     { exact: /^(updates?|status|status updates?)$/, loose: /(updates?|status)/, icon: /^(status|updates?)/, not: /read|unread|typing|delivery/ },
+    communities: { exact: /^communit(y|ies)$/, loose: /communit/, icon: /communit/, not: /new communit/ },
+    calls:       { exact: /^calls?$/, loose: /^calls?\b/, icon: /^calls?($|-outline|-filled|s)/, not: /voice|video|missed|new call/ },
+    settings:    { exact: /^settings?$/, loose: /settings?/, icon: /settings?/, not: /^$/ }
   };
-  function nav(tab) {
-    var sels = NAV[tab] || [];
-    for (var i = 0; i < sels.length; i++) {
-      var el = document.querySelector(sels[i]);
-      if (el) {
-        (el.closest('button,[role=button],[role=tab],a,[tabindex]') || el).click();
-        forceList = true;
-        setTimeout(apply, 120);
-        return true;
-      }
+  function labelsOf(el) {
+    var out = [];
+    ['aria-label', 'title', 'data-testid', 'data-tab', 'name'].forEach(function (a) { var v = el.getAttribute && el.getAttribute(a); if (v) out.push(v.toLowerCase().trim()); });
+    var ic = el.querySelector && el.querySelector('[data-icon]');
+    if (ic) out.push(('icon:' + ic.getAttribute('data-icon')).toLowerCase());
+    if (el.getAttribute && el.getAttribute('data-icon')) out.push(('icon:' + el.getAttribute('data-icon')).toLowerCase());
+    var tx = (el.textContent || '').trim().toLowerCase();
+    if (tx && tx.length <= 24) out.push(tx);
+    return out;
+  }
+  function clickableOf(el) { return el.closest('button,[role=button],[role=tab],a,[tabindex]') || el; }
+  function findTab(tab) {
+    var spec = TABS[tab]; if (!spec) return null;
+    var cands = document.querySelectorAll('[aria-label],[title],[data-testid],[data-icon],[role=tab],[role=button],[tabindex],button,a[href]'), best = null, bestScore = 0;
+    for (var i = 0; i < cands.length && i < 3000; i++) {
+      var el = cands[i];
+      if ((cur.chat && cur.chat.contains(el)) || el.closest('#pane-side,[data-mw=chat]')) continue;   // not controls of the open conversation / chat rows
+      var score = 0;
+      labelsOf(el).forEach(function (l) {
+        var isIcon = l.indexOf('icon:') === 0, v = isIcon ? l.slice(5) : l;
+        if (spec.not.test(v)) return;
+        var sc = isIcon ? (spec.icon.test(v) ? 1 : 0) : (spec.exact.test(v) ? 4 : (spec.loose.test(v) ? 2 : 0));
+        if (sc > score) score = sc;
+      });
+      if (!score) continue;
+      var host = clickableOf(el);
+      if (cur.others.some(function (o) { return o.contains(host); })) score += 1;      // prefer the icon strip / bottom bar
+      if (score > bestScore) { bestScore = score; best = host; }
     }
-    return false;
+    return best;
+  }
+  var lastNav = '';
+  function nav(tab) {
+    var el = findTab(tab);
+    lastNav = tab + ' -> ' + (el ? describe(el) + ' [' + labelsOf(el).slice(0, 3).join(' | ') + ']' : 'NOT FOUND');
+    if (!el) return false;
+    el.click();
+    forceList = true;
+    setTimeout(apply, 120);
+    return true;
+  }
+  // everything that looks like a tab button in the (hidden) icon strip: used by Layout diagnostics
+  function navScan() {
+    var out = [];
+    cur.others.forEach(function (o) {
+      Array.prototype.slice.call(o.querySelectorAll('button,[role=button],[role=tab],a,[tabindex]')).slice(0, 14).forEach(function (e) {
+        out.push('  ' + describe(e) + ' [' + labelsOf(e).slice(0, 3).join(' | ') + ']');
+      });
+    });
+    return out;
   }
 
   function describe(n) {
@@ -335,6 +377,9 @@
                'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat + ', overlayOpen: ' + overlayOpen(),
                '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'), 'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    out.push('last tab tap: ' + (lastNav || '(none yet)'));
+    out.push('icon-strip buttons:');
+    navScan().slice(0, 10).forEach(function (l) { out.push(l); });
     out.push('tap audit: checked ' + lastAudit.checked + ', blocked ' + lastAudit.blocked + ', repaired ' + lastAudit.fixed);
     lastAudit.notes.slice(0, 6).forEach(function (n) { out.push('  ' + n); });
     if (cur.chat) {
