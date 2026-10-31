@@ -100,6 +100,28 @@ final class SupabaseClient {
         }
     }
 
+    /** Inserts rows into a table through PostgREST; duplicates (same user_id+dedupe_key) are ignored. */
+    void insertRows(String table, String jsonArray) throws IOException {
+        ensureSession();
+        HttpURLConnection c = (HttpURLConnection) new URL(
+                base + "/rest/v1/" + table + "?on_conflict=user_id,dedupe_key").openConnection();
+        try {
+            c.setRequestMethod("POST");
+            c.setConnectTimeout(20000);
+            c.setReadTimeout(30000);
+            c.setRequestProperty("apikey", anon);
+            c.setRequestProperty("Authorization", "Bearer " + st.access());
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setRequestProperty("Prefer", "resolution=ignore-duplicates,return=minimal");
+            c.setDoOutput(true);
+            try (OutputStream o = c.getOutputStream()) { o.write(jsonArray.getBytes(StandardCharsets.UTF_8)); }
+            int code = c.getResponseCode();
+            if (code / 100 != 2) throw new IOException("HTTP " + code + " " + errorBody(c));
+        } finally {
+            c.disconnect();
+        }
+    }
+
     // ------------------------------------------------------------ helpers
     private JSONObject postJson(String path, String body) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();

@@ -23,7 +23,7 @@ import java.util.List;
 public class MainActivity extends Activity {
     private EditText url, anon, email, password;
     private CheckBox photos, videos, contacts, auto, compress, messages;
-    private TextView summary, log;
+    private TextView summary, log, listenerState;
     private Settings st;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -62,7 +62,13 @@ public class MainActivity extends Activity {
         compress = check(root, "Compress photos to WebP (smaller, faster uploads)", st.compress());
         videos = check(root, "Videos", st.videos());
         contacts = check(root, "Contacts", st.contacts());
-        messages = check(root, "Text messages (SMS)", st.messages());
+        messages = check(root, "Messages (captured from notifications)", st.messages());
+        Button access = button(root, "Enable message capture (notification access)");
+        access.setOnClickListener(v -> startActivity(
+                new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        listenerState = new TextView(this);
+        listenerState.setTextSize(12);
+        root.addView(listenerState);
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
 
         Button start = button(root, "Back up now");
@@ -80,7 +86,14 @@ public class MainActivity extends Activity {
         root.addView(log);
     }
 
-    @Override protected void onResume() { super.onResume(); ui.post(refresh); }
+    @Override protected void onResume() {
+        super.onResume();
+        String on = android.provider.Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+        boolean enabled = on != null && on.contains(getPackageName());
+        listenerState.setText(enabled ? "Message capture is ON. New messages are sent as they arrive."
+                : "Message capture is OFF. Tap the button above and allow Cloud Backup.");
+        ui.post(refresh);
+    }
     @Override protected void onPause() { super.onPause(); ui.removeCallbacks(refresh); }
 
     private void auth(boolean create) {
@@ -140,7 +153,6 @@ public class MainActivity extends Activity {
             need.add(Manifest.permission.READ_EXTERNAL_STORAGE);
         }
         if (contacts.isChecked()) need.add(Manifest.permission.READ_CONTACTS);
-        if (messages.isChecked()) need.add(Manifest.permission.READ_SMS);
         List<String> missing = new ArrayList<>();
         for (String p : need) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
         if (!missing.isEmpty()) {
