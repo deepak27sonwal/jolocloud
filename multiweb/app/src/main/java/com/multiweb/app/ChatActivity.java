@@ -53,20 +53,35 @@ public class ChatActivity extends Activity {
     private PermissionRequest pendingPerm;
     private String account;
     private int lastUnread = 0;
-    private boolean wide = false;
+    private FrameLayout root;
+    private android.view.View splash;
+    private int accent = 0xFF00897B;
+    private boolean wide = false;      // false = Auto (page adapts to the real screen width)
+    private int textZoom = 100;
+    private android.content.SharedPreferences ui;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         account = getIntent().getStringExtra("name");
         if (account == null) account = "WhatsApp";
         setTitle(account);
+        accent = getIntent().getIntExtra("color", accent);
+        if (getActionBar() != null) getActionBar().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(accent));
+        getWindow().setStatusBarColor(darken(accent));
+        ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
+        wide = ui.getBoolean("desktop", false);
+        textZoom = ui.getInt("zoom", 100);
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         web = new WebView(this);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(100);
         root.addView(bar, new FrameLayout.LayoutParams(-1, 8));
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE));
+        splash = buildSplash();
+        root.addView(splash, new FrameLayout.LayoutParams(-1, -1));
+        web.postDelayed(this::hideSplash, 9000); // never leave the loading screen up forever
         setContentView(root);
 
         applySettings();
@@ -87,6 +102,7 @@ public class ChatActivity extends Activity {
         s.setUserAgentString(DESKTOP_UA);           // WhatsApp Web refuses mobile user agents
         s.setUseWideViewPort(wide);                 // compact (phone-width) layout unless toggled
         s.setLoadWithOverviewMode(wide);
+        s.setTextZoom(textZoom);
         s.setSupportZoom(true);
         s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
@@ -103,7 +119,7 @@ public class ChatActivity extends Activity {
             return true; // links to other sites open in the normal browser
         }
         @Override public void onPageStarted(WebView v, String u, Bitmap f) { bar.setVisibility(android.view.View.VISIBLE); }
-        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); }
+        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); }
     }
 
     private class Chrome extends WebChromeClient {
@@ -208,11 +224,69 @@ public class ChatActivity extends Activity {
                 .setContentIntent(pi).setAutoCancel(true).build());
     }
 
+    // ------------------------------------------------------------ loading screen
+    private android.view.View buildSplash() {
+        float d = getResources().getDisplayMetrics().density;
+        android.widget.LinearLayout l = new android.widget.LinearLayout(this);
+        l.setOrientation(android.widget.LinearLayout.VERTICAL);
+        l.setGravity(android.view.Gravity.CENTER);
+        l.setBackgroundColor(accent);
+        l.setClickable(true); // swallow touches while loading
+        android.widget.TextView av = new android.widget.TextView(this);
+        av.setText(account.substring(0, 1).toUpperCase());
+        av.setTextColor(accent);
+        av.setTextSize(40);
+        av.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        av.setGravity(android.view.Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        g.setColor(android.graphics.Color.WHITE);
+        av.setBackground(g);
+        l.addView(av, new android.widget.LinearLayout.LayoutParams((int) (96 * d), (int) (96 * d)));
+        android.widget.TextView n = new android.widget.TextView(this);
+        n.setText(account);
+        n.setTextColor(android.graphics.Color.WHITE);
+        n.setTextSize(22);
+        n.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        n.setPadding(0, (int) (16 * d), 0, (int) (4 * d));
+        l.addView(n);
+        android.widget.TextView s = new android.widget.TextView(this);
+        s.setText("Connecting to WhatsApp Web…");
+        s.setTextColor(0xCCFFFFFF);
+        s.setTextSize(14);
+        l.addView(s);
+        // gentle pulse so it feels alive
+        av.animate().scaleX(1.08f).scaleY(1.08f).setDuration(700).withEndAction(new Runnable() {
+            @Override public void run() {
+                if (splash == null) return;
+                float t = av.getScaleX() > 1.04f ? 1f : 1.08f;
+                av.animate().scaleX(t).scaleY(t).setDuration(700).withEndAction(this).start();
+            }
+        }).start();
+        return l;
+    }
+
+    private void hideSplash() {
+        final android.view.View s = splash;
+        if (s == null) return;
+        splash = null;
+        s.animate().alpha(0f).setDuration(300).withEndAction(() -> root.removeView(s)).start();
+    }
+
+    private static int darken(int c) {
+        float[] hsv = new float[3];
+        android.graphics.Color.colorToHSV(c, hsv);
+        hsv[2] *= 0.75f;
+        return android.graphics.Color.HSVToColor(hsv);
+    }
+
     // ------------------------------------------------------------ menu / lifecycle
     @Override public boolean onCreateOptionsMenu(Menu m) {
         m.add(0, 1, 0, "Reload");
-        m.add(0, 2, 1, "Switch phone / desktop layout");
-        m.add(0, 3, 2, "Log out & clear this account");
+        m.add(0, 2, 1, wide ? "Layout: Desktop (tap for Auto)" : "Layout: Auto (tap for Desktop)");
+        m.add(0, 4, 2, "Text size +");
+        m.add(0, 5, 3, "Text size -");
+        m.add(0, 3, 4, "Log out & clear this account");
         return true;
     }
 
@@ -221,8 +295,17 @@ public class ChatActivity extends Activity {
             case 1: web.reload(); return true;
             case 2:
                 wide = !wide;
+                ui.edit().putBoolean("desktop", wide).apply();
                 applySettings();
                 web.reload();
+                invalidateOptionsMenu();
+                return true;
+            case 4:
+            case 5:
+                textZoom = Math.max(70, Math.min(200, textZoom + (i.getItemId() == 4 ? 10 : -10)));
+                ui.edit().putInt("zoom", textZoom).apply();
+                web.getSettings().setTextZoom(textZoom);
+                Toast.makeText(this, "Text size " + textZoom + "%", Toast.LENGTH_SHORT).show();
                 return true;
             case 3:
                 new AlertDialog.Builder(this).setTitle("Clear " + account + "?")
@@ -237,6 +320,12 @@ public class ChatActivity extends Activity {
                 return true;
         }
         return false;
+    }
+
+    @Override public void onConfigurationChanged(android.content.res.Configuration cfg) {
+        super.onConfigurationChanged(cfg);
+        // Tell the page the window size changed so it switches between one-pane and two-pane layouts.
+        web.postDelayed(() -> web.evaluateJavascript("window.dispatchEvent(new Event('resize'))", null), 250);
     }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); web.saveState(out); }
