@@ -1,0 +1,8 @@
+pluginManagement {
+    repositories { google(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositories { google() }
+}
+rootProject.name = "CloudBackup"
+include ':app'
