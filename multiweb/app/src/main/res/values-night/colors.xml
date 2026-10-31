@@ -8,4 +8,6 @@
     <color name="stroke">#2A343A</color>
     <color name="text">#E5E7EB</color>
     <color name="subtext">#9CA3AF</color>
+    <color name="pill">#103529</color>
+    <color name="badge">#25D366</color>
 </resources>

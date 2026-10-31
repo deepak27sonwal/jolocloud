@@ -18,6 +18,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.view.Menu;
+import android.view.View;
 import android.view.MenuItem;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -58,6 +59,12 @@ public class ChatActivity extends Activity {
     private int accent = 0xFF00897B;
     private int mode = 0;               // 0 = Phone (one pane at a time), 1 = Desktop (zoomed out), 2 = Original
     private String mwScript;
+    private android.widget.LinearLayout navBar;
+    private final android.view.View[] navPill = new android.view.View[4];
+    private final android.widget.ImageView[] navIcon = new android.widget.ImageView[4];
+    private final android.widget.TextView[] navLabel = new android.widget.TextView[4];
+    private android.widget.TextView chatsBadge;
+    private int activeTab = 0;
     private int textZoom = 100;
     private android.content.SharedPreferences ui;
 
@@ -83,7 +90,13 @@ public class ChatActivity extends Activity {
         splash = buildSplash();
         root.addView(splash, new FrameLayout.LayoutParams(-1, -1));
         web.postDelayed(this::hideSplash, 9000); // never leave the loading screen up forever
-        setContentView(root);
+        android.widget.LinearLayout outer = new android.widget.LinearLayout(this);
+        outer.setOrientation(android.widget.LinearLayout.VERTICAL);
+        outer.addView(root, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
+        navBar = buildNav();
+        navBar.setVisibility(android.view.View.GONE);   // shown by the page script once the chat list is up
+        outer.addView(navBar, new android.widget.LinearLayout.LayoutParams(-1, -2));
+        setContentView(outer);
 
         applySettings();
         CookieManager.getInstance().setAcceptCookie(true);
@@ -129,6 +142,7 @@ public class ChatActivity extends Activity {
         @Override public void onReceivedTitle(WebView v, String title) {
             Matcher m = Pattern.compile("^\\((\\d+)\\)").matcher(title == null ? "" : title);
             int n = m.find() ? Integer.parseInt(m.group(1)) : 0;
+            setBadge(n);
             if (n > lastUnread) notifyUnread(n);
             lastUnread = n;
         }
@@ -190,6 +204,11 @@ public class ChatActivity extends Activity {
     }
 
     private class Bridge {
+        @JavascriptInterface public void view(String v) {
+            runOnUiThread(() -> navBar.setVisibility(mode == 0 && "list".equals(v)
+                    ? android.view.View.VISIBLE : android.view.View.GONE));
+        }
+
         @JavascriptInterface public void save(String b64, String mime, String name) {
             try {
                 byte[] data = Base64.decode(b64, Base64.DEFAULT);
@@ -223,6 +242,88 @@ public class ChatActivity extends Activity {
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
                 .setContentTitle(account).setContentText(n + " unread chat" + (n == 1 ? "" : "s"))
                 .setContentIntent(pi).setAutoCancel(true).build());
+    }
+
+
+    // ------------------------------------------------------------ WhatsApp-style bottom bar
+    private static final String[] TABS = {"chats", "updates", "communities", "calls"};
+    private static final String[] TAB_LABELS = {"Chats", "Updates", "Communities", "Calls"};
+    private static final int[] TAB_ICONS = {R.drawable.ic_chat, R.drawable.ic_updates, R.drawable.ic_people, R.drawable.ic_call};
+
+    private android.widget.LinearLayout buildNav() {
+        float d = getResources().getDisplayMetrics().density;
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(this);
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(getColor(R.color.surface));
+        bar.setElevation(8 * d);
+        bar.setPadding(0, (int) (8 * d), 0, (int) (8 * d));
+        for (int i = 0; i < TABS.length; i++) {
+            final int idx = i;
+            android.widget.LinearLayout item = new android.widget.LinearLayout(this);
+            item.setOrientation(android.widget.LinearLayout.VERTICAL);
+            item.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+            android.widget.FrameLayout top = new android.widget.FrameLayout(this);
+            View pill = new View(this);
+            android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+            g.setCornerRadius(16 * d);
+            g.setColor(getColor(R.color.pill));
+            pill.setBackground(g);
+            top.addView(pill, new android.widget.FrameLayout.LayoutParams((int) (56 * d), (int) (32 * d),
+                    android.view.Gravity.CENTER));
+            android.widget.ImageView icon = new android.widget.ImageView(this);
+            icon.setImageResource(TAB_ICONS[i]);
+            top.addView(icon, new android.widget.FrameLayout.LayoutParams((int) (24 * d), (int) (24 * d),
+                    android.view.Gravity.CENTER));
+            if (i == 0) {
+                chatsBadge = new android.widget.TextView(this);
+                chatsBadge.setTextColor(android.graphics.Color.WHITE);
+                chatsBadge.setTextSize(10);
+                chatsBadge.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                chatsBadge.setGravity(android.view.Gravity.CENTER);
+                chatsBadge.setPadding((int) (5 * d), 0, (int) (5 * d), 0);
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setCornerRadius(10 * d);
+                bg.setColor(getColor(R.color.badge));
+                chatsBadge.setBackground(bg);
+                chatsBadge.setVisibility(android.view.View.GONE);
+                android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(-2,
+                        (int) (18 * d), android.view.Gravity.CENTER);
+                bp.setMargins((int) (26 * d), (int) (-22 * d), 0, 0);
+                top.addView(chatsBadge, bp);
+            }
+            item.addView(top, new android.widget.LinearLayout.LayoutParams(-1, (int) (32 * d)));
+            android.widget.TextView label = new android.widget.TextView(this);
+            label.setText(TAB_LABELS[i]);
+            label.setTextSize(12);
+            label.setPadding(0, (int) (4 * d), 0, 0);
+            item.addView(label);
+            navPill[i] = pill; navIcon[i] = icon; navLabel[i] = label;
+            item.setOnClickListener(v -> {
+                activeTab = idx;
+                paintNav();
+                web.evaluateJavascript("window.__mw&&window.__mw.nav('" + TABS[idx] + "')", null);
+            });
+            bar.addView(item, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
+        }
+        paintNav();
+        return bar;
+    }
+
+    private void paintNav() {
+        for (int i = 0; i < TABS.length; i++) {
+            boolean on = i == activeTab;
+            navPill[i].setVisibility(on ? android.view.View.VISIBLE : android.view.View.INVISIBLE);
+            int col = getColor(on ? R.color.text : R.color.subtext);
+            navIcon[i].setColorFilter(col);
+            navLabel[i].setTextColor(col);
+            navLabel[i].setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+        }
+    }
+
+    private void setBadge(int n) {
+        if (chatsBadge == null) return;
+        chatsBadge.setText(n > 99 ? "99+" : String.valueOf(n));
+        chatsBadge.setVisibility(n > 0 ? android.view.View.VISIBLE : android.view.View.GONE);
     }
 
     // ------------------------------------------------------------ loading screen
@@ -286,6 +387,7 @@ public class ChatActivity extends Activity {
         m.add(0, 1, 0, "Reload");
         m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
         m.add(0, 6, 1, "Show chat list");
+        m.add(0, 8, 4, "WhatsApp settings");
         m.add(0, 7, 5, "Layout diagnostics");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
@@ -304,6 +406,9 @@ public class ChatActivity extends Activity {
                 applySettings();
                 web.reload();
                 invalidateOptionsMenu();
+                return true;
+            case 8:
+                web.evaluateJavascript("window.__mw&&window.__mw.nav('settings')", null);
                 return true;
             case 7:
                 web.evaluateJavascript("window.__mw?window.__mw.debug():'Phone-mode script is not running on this page'", r -> {
