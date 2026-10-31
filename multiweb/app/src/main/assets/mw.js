@@ -91,7 +91,7 @@
     style.textContent = '';
     Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit]'), function (e) {
       e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-fit');
-      if (e.style && e.style.zoom) e.style.zoom = '';
+      e.removeAttribute('data-mw-scale');
     });
   }
 
@@ -129,6 +129,12 @@
       '[data-mw=chat]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important;' +
       'left:0!important;right:auto!important;margin-left:0!important;transform:none!important;position:relative!important}' +
       '[data-mw-fit]{max-width:100%!important;min-width:0!important}' +
+      '[data-mw=chat][data-mw-scale]{transform:scale(var(--mw-s))!important;transform-origin:0 0!important;' +
+      'width:calc(100% / var(--mw-s))!important;max-width:none!important;height:calc(100% / var(--mw-s))!important}' +
+      '[data-mw-vis]{overflow:visible!important;width:auto!important;min-width:max-content!important;max-width:none!important;flex:0 0 auto!important}' +
+      '[data-mw-pass]{pointer-events:none!important}' +
+      '[data-mw=chat] [data-id],[data-mw=chat] .message-in,[data-mw=chat] .message-out{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important}' +
+      'html{touch-action:manipulation}' +
       'html[data-mw-view=chat] [data-mw=list]{display:none!important}' +
       'html[data-mw-view=list] [data-mw=chat]{display:none!important}' +
       'html[data-mw-view=chat] [data-mw=chat] header{padding-left:46px!important}' +
@@ -147,7 +153,7 @@
     var host = cur.chat;
     if (!attached(host) || document.documentElement.getAttribute('data-mw-view') !== 'chat') return;
     var vw = document.documentElement.clientWidth;
-    host.style.zoom = '';
+    host.removeAttribute('data-mw-scale'); host.style.removeProperty('--mw-s');   // measure unscaled
     for (var pass = 0; pass < 3; pass++) {
       var els = host.querySelectorAll('*'), changed = false, n = 0;
       for (var i = 0; i < els.length && n < 4000; i++, n++) {
@@ -163,11 +169,89 @@
       var rr = els2[j].getBoundingClientRect();
       if (rr.width > 0 && rr.height > 0 && rr.right > right && rr.left < vw * 2) right = rr.right;
     }
-    if (right > vw + 4) host.style.zoom = String(Math.max(0.5, vw / right));
+    if (right > vw + 4) { host.style.setProperty('--mw-s', String(Math.max(0.5, vw / right))); host.setAttribute('data-mw-scale', '1'); }
   }
   function scheduleFit() {
-    [0, 350, 1200].forEach(function (ms) { setTimeout(fit, ms); });
+    [0, 350, 1200].forEach(function (ms) { setTimeout(function () { fit(); audit(); }, ms); });
   }
+
+
+  // ---- Tap audit: every control in the chat header and message bar must be reachable by a finger.
+  // A control is "blocked" if the element at its centre is not itself (clipped by a narrow parent, covered by an overlay).
+  var lastAudit = { checked: 0, blocked: 0, fixed: 0, notes: [] };
+  var CONTROLS = 'button,[role="button"],[tabindex="0"],[data-icon],[contenteditable="true"],input,a[href]';
+  function blockedControls(host) {
+    var out = [], els = host.querySelectorAll('header ' + CONTROLS.split(',').join(', header ') + ', footer ' + CONTROLS.split(',').join(', footer '));
+    var vw = window.innerWidth, vh = window.innerHeight, n = 0;
+    for (var i = 0; i < els.length && n < 300; i++, n++) {
+      var el = els[i], r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      var cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none' || cs.pointerEvents === 'none') continue;
+      if (cx < 0 || cy < 0 || cx > vw || cy > vh) { out.push({ el: el, top: null }); continue; }
+      var t = document.elementFromPoint(cx, cy);
+      if (!t || el.contains(t) || t.contains(el) || t.id === 'mw-back') continue;
+      out.push({ el: el, top: t });
+    }
+    return { list: out, checked: n };
+  }
+  function audit() {
+    var host = cur.chat;
+    if (!attached(host) || document.documentElement.getAttribute('data-mw-view') !== 'chat') return;
+    var a = blockedControls(host), fixed = 0;
+    lastAudit = { checked: a.checked, blocked: a.list.length, fixed: 0, notes: [] };
+    a.list.slice(0, 40).forEach(function (b) {
+      lastAudit.notes.push(describe(b.el) + (b.top ? '  covered by ' + describe(b.top) : '  off-screen'));
+      // let every container between the control and the header/footer grow to fit its content
+      for (var p = b.el.parentElement; p && p !== host && p.tagName !== 'HEADER' && p.tagName !== 'FOOTER'; p = p.parentElement)
+        p.setAttribute('data-mw-vis', '1');
+      // a transparent, empty layer sitting on top of a control is made click-through
+      var t = b.top;
+      if (t && t !== host && !t.querySelector(CONTROLS) && !(t.textContent || '').trim() && !t.closest('[data-mw-pass]')) t.setAttribute('data-mw-pass', '1');
+    });
+    if (a.list.length) {
+      fit();                                   // the header may now be wider: shrink to the screen again
+      var b2 = blockedControls(host);
+      lastAudit.fixed = Math.max(0, a.list.length - b2.list.length);
+      lastAudit.blocked = b2.list.length;
+      b2.list.slice(0, 5).forEach(function (b) { lastAudit.notes.push('STILL BLOCKED ' + describe(b.el) + (b.top ? ' by ' + describe(b.top) : '')); });
+    }
+  }
+
+  // ---- Long-press a message => open its action menu (WhatsApp Web only offers it on mouse hover / right-click)
+  var lp = null, suppressClickUntil = 0;
+  function msgOf(t) { return t && t.closest ? t.closest('[data-id],.message-in,.message-out,[data-testid="msg-container"]') : null; }
+  document.addEventListener('touchstart', function (e) {
+    if (document.documentElement.getAttribute('data-mw-view') !== 'chat' || e.touches.length !== 1) return;
+    var m = msgOf(e.target);
+    if (!m || e.target.closest('footer,header')) return;
+    var t = e.touches[0];
+    lp = { x: t.clientX, y: t.clientY, el: e.target, fired: false };
+    lp.timer = setTimeout(function () {
+      if (!lp) return;
+      lp.fired = true;
+      suppressClickUntil = Date.now() + 700;
+      var ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: lp.x, clientY: lp.y, button: 2, buttons: 2, view: window });
+      lp.el.dispatchEvent(ev);
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch (x) {}
+    }, 520);
+  }, { passive: true, capture: true });
+  document.addEventListener('touchmove', function (e) {
+    if (!lp) return;
+    var t = e.touches[0];
+    if (Math.abs(t.clientX - lp.x) > 10 || Math.abs(t.clientY - lp.y) > 10) { clearTimeout(lp.timer); lp = null; }
+  }, { passive: true, capture: true });
+  function endTouch() { if (lp) { clearTimeout(lp.timer); lp = null; } }
+  document.addEventListener('touchend', endTouch, { passive: true, capture: true });
+  document.addEventListener('touchcancel', endTouch, { passive: true, capture: true });
+  document.addEventListener('click', function (e) {
+    if (Date.now() < suppressClickUntil) { e.stopPropagation(); e.preventDefault(); suppressClickUntil = 0; }
+  }, true);
+  document.addEventListener('contextmenu', function (e) {
+    // keep the page's own menu; just stop the Android text-selection popup from also appearing
+    if (e.isTrusted && msgOf(e.target)) e.preventDefault();
+  }, true);
 
   function schedule() {
     clearTimeout(timer); timer = setTimeout(apply, 80);
@@ -175,8 +259,19 @@
   }
 
   function back() {
-    if (document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; apply(); return true; }
-    return false;
+    if (document.documentElement.getAttribute('data-mw-view') !== 'chat') return false;
+    // First try Escape: WhatsApp Web closes menus, the emoji tray, attach menu and info panels with it.
+    var OV = '[role="dialog"],[role="menu"],[role="listbox"],[aria-modal="true"],[data-animate-dropdown-item],[data-animate-modal-popup],[data-testid="emoji-panel"]';
+    function snap() { return document.getElementsByTagName('*').length + document.querySelectorAll(OV).length * 1000; }
+    var before = snap(), tgt = document.activeElement || document.body;
+    ['keydown', 'keyup'].forEach(function (t) {
+      tgt.dispatchEvent(new KeyboardEvent(t, { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+    });
+    setTimeout(function () {
+      // something closed (menu / emoji tray / panel) => stay in the chat; otherwise go back to the chat list
+      if (snap() === before && document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; apply(); }
+    }, 300);
+    return true;
   }
 
   var NAV = {
@@ -207,12 +302,14 @@
   }
   function debug() {
     var out = ['viewport ' + window.innerWidth + 'x' + window.innerHeight + ', scrollWidth ' + document.documentElement.scrollWidth,
-               'row: ' + describe(row), 'list: ' + describe(cur.list), 'chat: ' + describe(cur.chat) + (cur.chat && cur.chat.style.zoom ? ' zoom=' + cur.chat.style.zoom : ''),
+               'row: ' + describe(row), 'list: ' + describe(cur.list), 'chat: ' + describe(cur.chat) + (cur.chat && cur.chat.hasAttribute('data-mw-scale') ? ' scaled=' + cur.chat.style.getPropertyValue('--mw-s') : ''),
                'others: ' + (cur.others.map(describe).join(' | ') || '(none)'),
                'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat,
                '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'),
                'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    out.push('tap audit: checked ' + lastAudit.checked + ', blocked ' + lastAudit.blocked + ', repaired ' + lastAudit.fixed);
+    lastAudit.notes.slice(0, 6).forEach(function (n) { out.push('  ' + n); });
     if (cur.chat) {
       var wide = Array.prototype.slice.call(cur.chat.querySelectorAll('*')).map(function (e) { return [e.getBoundingClientRect().width, e]; })
         .sort(function (a, b) { return b[0] - a[0]; }).slice(0, 5);
@@ -232,6 +329,6 @@
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit };
+  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit, audit: audit };
   apply();
 })();

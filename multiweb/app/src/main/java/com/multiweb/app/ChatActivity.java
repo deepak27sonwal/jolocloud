@@ -117,8 +117,9 @@ public class ChatActivity extends Activity {
         s.setUseWideViewPort(mode == 1);                 // compact (phone-width) layout unless toggled
         s.setLoadWithOverviewMode(mode == 1);
         s.setTextZoom(textZoom);
-        s.setSupportZoom(true);
-        s.setBuiltInZoomControls(true);
+        // Phone mode: no pinch / double-tap zoom, so taps on buttons are instant (use the Text size menu instead)
+        s.setSupportZoom(mode != 0);
+        s.setBuiltInZoomControls(mode != 0);
         s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setAllowFileAccess(false);
