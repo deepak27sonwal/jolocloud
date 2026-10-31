@@ -1,16 +1,16 @@
-/* Phone mode for WhatsApp Web: show ONE pane at a time (chat list OR conversation) so it fits the screen.
+/* Phone mode for WhatsApp Web: ONE pane at a time (chat list OR conversation), always fitted to the screen.
    Panes are found by structure (the flex row that holds #side), not by size, because at phone width the
-   original layout squeezes every pane to a few dozen pixels. */
+   original layout squeezes/overflows every pane. The chat view then measures itself and fixes overflow. */
 (function () {
   if (window.__mw) { window.__mw.refresh(); return; }
   var style = document.createElement('style');
   style.id = 'mw-style';
   document.head.appendChild(style);
 
-  var row = null, list = null, right = null, rails = [], forceList = false, lastChatOpen = false, timer = null, backBtn = null;
+  var row = null, kids0 = [], forceList = false, lastChatOpen = false, timer = null, fitTimer = null, backBtn = null;
+  var cur = { list: null, chat: null, others: [], hasChat: false };
 
   function attached(n) { return !!n && document.documentElement.contains(n); }
-
   function kidsOf(n) {
     return Array.prototype.filter.call(n.children, function (c) {
       var t = c.tagName;
@@ -32,7 +32,6 @@
       if (rowLike && ks.filter(big).length >= 2) return n;
       n = ks.reduce(function (a, b) { return area(a) >= area(b) ? a : b; });
     }
-    // fallback: climb from #side to the first ancestor that has a sizeable sibling
     var s = document.getElementById('side'), c = s;
     while (c && c.parentElement && c.parentElement !== document.body) {
       var p = c.parentElement;
@@ -44,80 +43,141 @@
 
   function detect() {
     row = findRow();
-    list = right = null; rails = [];
+    kids0 = [];
     if (!row) return false;
-    var side = document.getElementById('side');
-    var kids = kidsOf(row).filter(function (k) { return k.offsetWidth > 0 || k.offsetHeight > 0; });
-    if (kids.length < 2) return false;
+    // a pane squeezed to a few pixels still counts: any full-height child of the row
+    kids0 = kidsOf(row).filter(function (k) { return k.offsetWidth > 0 && k.offsetHeight > 100; });
+    return kids0.length >= 2;
+  }
+
+  // Which child of the row is the chat list, which is the conversation, which are extras (icon strip, ...)
+  function roles() {
+    var side = document.getElementById('side'), main = document.getElementById('main');
+    var kids = kidsOf(row);
+    var list = null, chat = null, hasChat = false;
     kids.forEach(function (k) { if (side && k.contains(side)) list = k; });
-    if (!list) list = kids.slice(0, -1).reduce(function (a, b) { return area(a) >= area(b) ? a : b; });
-    var after = kids.slice(kids.indexOf(list) + 1);
-    right = after.length ? after[after.length - 1] : null;
-    if (!right) return false;
-    rails = kids.filter(function (k) { return k !== list && k !== right; });
-    return true;
+    if (main) kids.forEach(function (k) { if (k !== list && k.contains(main)) chat = k; });
+    if (chat) hasChat = true;
+    if (!chat) {      // id may differ in newer versions: a message composer / footer only exists in an open chat
+      kids.forEach(function (k) {
+        if (!chat && k !== list && k.querySelector && k.querySelector('footer,[contenteditable="true"],[data-testid="conversation-compose-box-input"]')) {
+          chat = k; hasChat = true;
+        }
+      });
+    }
+    if (!list) list = kids0.slice(0, -1).reduce(function (a, b) { return !a || area(a) >= area(b) ? b : a; }, null);
+    if (!chat) {
+      var after = kids.filter(function (k) { return k !== list && kids0.indexOf(k) >= 0; });
+      chat = after.length ? after[after.length - 1] : null;
+    }
+    var others = kids0.filter(function (k) { return k !== list && k !== chat; });
+    cur = { list: list, chat: chat, others: others, hasChat: hasChat };
+    return !!(list && chat);
   }
 
   function ensureBackBtn() {
     if (attached(backBtn)) return backBtn;
     backBtn = document.createElement('div');
     backBtn.id = 'mw-back';
-    backBtn.textContent = '‹';
+    backBtn.textContent = '←';
     backBtn.addEventListener('click', function (e) { e.stopPropagation(); back(); });
     document.body.appendChild(backBtn);
     return backBtn;
   }
 
+  function notify(v) { try { if (window.Android && window.Android.view) window.Android.view(v); } catch (e) {} }
+
+  function clearMarks() {
+    style.textContent = '';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit]'), function (e) {
+      e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-fit');
+      if (e.style && e.style.zoom) e.style.zoom = '';
+    });
+  }
+
   function apply() {
-    if (!(attached(row) && attached(list) && attached(right))) {
-      style.textContent = '';                       // measure the original layout again
-      Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-in]'), function (e) {
-        e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-in');
-      });
+    if (!(attached(row) && kids0.length && kids0.every(attached))) {
+      clearMarks();
       if (!detect()) { notify('none'); return; }
     }
-    var chatOpen = !!document.getElementById('main');
+    if (!roles()) { notify('none'); return; }
+    var chatOpen = cur.hasChat;
     if (chatOpen && !lastChatOpen) forceList = false;     // a chat was just opened
     lastChatOpen = chatOpen;
     var showChat = chatOpen && !forceList;
 
+    // clear role marks, then set them again
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mw]'), function (e) { e.removeAttribute('data-mw'); });
     row.setAttribute('data-mw', 'row');
-    list.setAttribute('data-mw', 'list');
-    right.setAttribute('data-mw', 'right');
-    rails.forEach(function (r) { r.setAttribute('data-mw', 'rail'); });
-    for (var a = row.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
-    var side = document.getElementById('side');
-    for (var i = side; i && i !== row && i !== list.parentElement; i = i.parentElement) i.setAttribute('data-mw-in', '1');
+    cur.list.setAttribute('data-mw', 'list');
+    cur.chat.setAttribute('data-mw', 'chat');
+    cur.others.forEach(function (r) { r.setAttribute('data-mw', 'other'); });
+    // every ancestor (of the row, and of the conversation) must be allowed to shrink to the phone width
+    [row, cur.chat].forEach(function (start) {
+      for (var a = start.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
+    });
     document.documentElement.setAttribute('data-mw-view', showChat ? 'chat' : 'list');
     ensureBackBtn().style.display = showChat ? 'flex' : 'none';
     notify(showChat ? 'chat' : 'list');
 
     style.textContent =
-      'html,body,#app{min-width:0!important;max-width:100vw!important;overflow-x:hidden!important}' +
+      'html,body,#app{min-width:0!important;max-width:100vw!important;overflow-x:hidden!important;-webkit-text-size-adjust:100%}' +
       '[data-mw-anc]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
       '[data-mw=row]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
-      '[data-mw=rail]{display:none!important}' +
+      '[data-mw=other]{display:none!important}' +
+      '[data-mw=list]{flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
+      '[data-mw=chat]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important;' +
+      'left:0!important;right:auto!important;margin-left:0!important;transform:none!important;position:relative!important}' +
+      '[data-mw-fit]{max-width:100%!important;min-width:0!important}' +
+      'html[data-mw-view=chat] [data-mw=list]{display:none!important}' +
+      'html[data-mw-view=list] [data-mw=chat]{display:none!important}' +
+      'html[data-mw-view=chat] [data-mw=chat] header{padding-left:46px!important}' +
+      '[aria-label="New chat"]{}' +
       'html[data-mw-view=list] [aria-label="New chat"]{position:fixed!important;right:16px;bottom:84px;z-index:50;' +
       'width:56px;height:56px;border-radius:16px;box-shadow:0 3px 8px rgba(0,0,0,.3)}' +
-      '[data-mw=list]{flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
-      '[data-mw=right]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important}' +
-      '[data-mw-in]{min-width:0!important;max-width:100%!important}' +
-      'html[data-mw-view=chat] [data-mw=list],html[data-mw-view=chat] [data-mw=rail]{display:none!important}' +
-      'html[data-mw-view=list] [data-mw=right]{display:none!important}' +
-      '#mw-back{position:fixed;left:0;top:10px;width:30px;height:46px;z-index:2147483647;display:none;' +
-      'align-items:center;justify-content:center;font:700 30px/1 sans-serif;color:#fff;' +
-      'background:rgba(0,0,0,.45);border-radius:0 23px 23px 0}';
+      '#mw-back{position:fixed;left:4px;top:14px;width:40px;height:40px;z-index:2147483647;display:none;' +
+      'align-items:center;justify-content:center;font:400 26px/1 sans-serif;color:#54656f}' +
+      '@media (prefers-color-scheme:dark){#mw-back{color:#aebac1}}';
+    if (showChat) scheduleFit();
   }
 
-  function notify(v) { try { if (window.Android && window.Android.view) window.Android.view(v); } catch (e) {} }
+  // Geometry pass: anything inside the conversation that is still wider than the screen gets squeezed;
+  // if something stubborn remains, the whole conversation is scaled down so nothing leaves the screen.
+  function fit() {
+    var host = cur.chat;
+    if (!attached(host) || document.documentElement.getAttribute('data-mw-view') !== 'chat') return;
+    var vw = document.documentElement.clientWidth;
+    host.style.zoom = '';
+    for (var pass = 0; pass < 3; pass++) {
+      var els = host.querySelectorAll('*'), changed = false, n = 0;
+      for (var i = 0; i < els.length && n < 4000; i++, n++) {
+        var e = els[i];
+        if (e.hasAttribute('data-mw-fit')) continue;
+        var r = e.getBoundingClientRect();
+        if (r.width > vw + 2 && r.height > 0) { e.setAttribute('data-mw-fit', '1'); changed = true; }
+      }
+      if (!changed) break;
+    }
+    var right = 0, els2 = host.querySelectorAll('*'), m = 0;
+    for (var j = 0; j < els2.length && m < 4000; j++, m++) {
+      var rr = els2[j].getBoundingClientRect();
+      if (rr.width > 0 && rr.height > 0 && rr.right > right && rr.left < vw * 2) right = rr.right;
+    }
+    if (right > vw + 4) host.style.zoom = String(Math.max(0.5, vw / right));
+  }
+  function scheduleFit() {
+    [0, 350, 1200].forEach(function (ms) { setTimeout(fit, ms); });
+  }
 
-  function schedule() { clearTimeout(timer); timer = setTimeout(apply, 80); }
+  function schedule() {
+    clearTimeout(timer); timer = setTimeout(apply, 80);
+    clearTimeout(fitTimer); fitTimer = setTimeout(fit, 500);
+  }
 
   function back() {
     if (document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; apply(); return true; }
     return false;
   }
-
 
   var NAV = {
     chats: ['[aria-label="Chats"]', '[data-icon^="chats"]', '[data-icon="chat"]'],
@@ -146,25 +206,32 @@
     return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (c ? '.' + c : '') + ' ' + n.offsetWidth + 'x' + n.offsetHeight;
   }
   function debug() {
-    var out = ['viewport ' + window.innerWidth + 'x' + window.innerHeight, 'row: ' + describe(row),
-               'list: ' + describe(list), 'right: ' + describe(right),
-               'rails: ' + (rails.map(describe).join(' | ') || '(none)'),
-               'view: ' + document.documentElement.getAttribute('data-mw-view'),
-               'has #side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'),
+    var out = ['viewport ' + window.innerWidth + 'x' + window.innerHeight + ', scrollWidth ' + document.documentElement.scrollWidth,
+               'row: ' + describe(row), 'list: ' + describe(cur.list), 'chat: ' + describe(cur.chat) + (cur.chat && cur.chat.style.zoom ? ' zoom=' + cur.chat.style.zoom : ''),
+               'others: ' + (cur.others.map(describe).join(' | ') || '(none)'),
+               'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat,
+               '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'),
                'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    if (cur.chat) {
+      var wide = Array.prototype.slice.call(cur.chat.querySelectorAll('*')).map(function (e) { return [e.getBoundingClientRect().width, e]; })
+        .sort(function (a, b) { return b[0] - a[0]; }).slice(0, 5);
+      out.push('widest in chat:');
+      wide.forEach(function (w) { out.push('  ' + describe(w[1]) + ' w=' + Math.round(w[0])); });
+    }
     return out.join('\n');
   }
 
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   // tapping a chat in the list always switches to the conversation, even if it is already the open one
   document.addEventListener('click', function (e) {
-    if (attached(list) && list.contains(e.target) && e.target.closest && e.target.closest('#pane-side')) {
+    if (attached(cur.list) && cur.list.contains(e.target) && e.target.closest &&
+        e.target.closest('#pane-side,[role="listitem"],[role="row"],[data-testid="cell-frame-container"]')) {
       forceList = false;
       setTimeout(apply, 60);
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav };
+  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit };
   apply();
 })();

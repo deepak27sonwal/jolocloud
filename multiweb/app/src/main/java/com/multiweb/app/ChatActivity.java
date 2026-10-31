@@ -205,8 +205,13 @@ public class ChatActivity extends Activity {
 
     private class Bridge {
         @JavascriptInterface public void view(String v) {
-            runOnUiThread(() -> navBar.setVisibility(mode == 0 && "list".equals(v)
-                    ? android.view.View.VISIBLE : android.view.View.GONE));
+            runOnUiThread(() -> {
+                navBar.setVisibility(mode == 0 && "list".equals(v) ? android.view.View.VISIBLE : android.view.View.GONE);
+                // inside a conversation WhatsApp's own header is used, like the phone app: hide ours
+                if (getActionBar() != null) {
+                    if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
+                }
+            });
         }
 
         @JavascriptInterface public void save(String b64, String mime, String name) {
