@@ -22,7 +22,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     private EditText url, anon, email, password;
-    private CheckBox photos, videos, contacts, auto, compress;
+    private CheckBox photos, videos, contacts, auto, compress, messages;
     private TextView summary, log;
     private Settings st;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
         compress = check(root, "Compress photos to WebP (smaller, faster uploads)", st.compress());
         videos = check(root, "Videos", st.videos());
         contacts = check(root, "Contacts", st.contacts());
+        messages = check(root, "Text messages (SMS)", st.messages());
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
 
         Button start = button(root, "Back up now");
@@ -118,6 +119,7 @@ public class MainActivity extends Activity {
                 .putBoolean("compress", compress.isChecked())
                 .putBoolean("videos", videos.isChecked())
                 .putBoolean("contacts", contacts.isChecked())
+                .putBoolean("messages", messages.isChecked())
                 .putBoolean("auto", auto.isChecked())
                 .apply();
         BackupJobService.schedule(this, auto.isChecked());
@@ -138,6 +140,7 @@ public class MainActivity extends Activity {
             need.add(Manifest.permission.READ_EXTERNAL_STORAGE);
         }
         if (contacts.isChecked()) need.add(Manifest.permission.READ_CONTACTS);
+        if (messages.isChecked()) need.add(Manifest.permission.READ_SMS);
         List<String> missing = new ArrayList<>();
         for (String p : need) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
         if (!missing.isEmpty()) {

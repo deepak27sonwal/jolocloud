@@ -20,6 +20,7 @@ final class Settings {
     boolean photos()   { return p.getBoolean("photos", true); }
     boolean videos()   { return p.getBoolean("videos", true); }
     boolean contacts() { return p.getBoolean("contacts", true); }
+    boolean messages() { return p.getBoolean("messages", true); }
     boolean compress() { return p.getBoolean("compress", true); }
     boolean auto()     { return p.getBoolean("auto", false); }
 

@@ -14,6 +14,7 @@ import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
+import android.provider.Telephony;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -22,7 +23,10 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.io.Writer;
+import java.security.DigestOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
@@ -64,6 +68,7 @@ final class BackupEngine {
             Status.log("Signing in…");
             s3.ensureSession();
             if (st.contacts() && !cancelled) backupContacts();
+            if (st.messages() && !cancelled) backupMessages();
             if (st.photos() && !cancelled) backupMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "photos");
             if (st.videos() && !cancelled) backupMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "videos");
         } catch (Exception e) {
@@ -244,6 +249,82 @@ final class BackupEngine {
             Status.log("Contacts failed: " + e.getMessage());
             failed++;
         }
+    }
+
+    // ---------------------------------------------------------------- SMS
+    /** Exports all SMS in the "SMS Backup & Restore" XML format; uploads only if changed. */
+    private void backupMessages() {
+        Status.summary = "Exporting messages";
+        File f = null;
+        try (Cursor c = cr.query(Telephony.Sms.CONTENT_URI, new String[]{
+                Telephony.Sms.ADDRESS, Telephony.Sms.DATE, Telephony.Sms.DATE_SENT, Telephony.Sms.TYPE,
+                Telephony.Sms.BODY, Telephony.Sms.READ, Telephony.Sms.PROTOCOL,
+                Telephony.Sms.SERVICE_CENTER, Telephony.Sms.STATUS}, null, null, "date ASC")) {
+            if (c == null) { Status.log("Cannot read messages"); failed++; return; }
+            f = File.createTempFile("sms", ".xml", ctx.getCacheDir());
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            int count = 0;
+            try (Writer w = new OutputStreamWriter(new DigestOutputStream(new FileOutputStream(f), md),
+                    StandardCharsets.UTF_8)) {
+                w.write("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n<smses count=\""
+                        + c.getCount() + "\">\n");
+                while (c.moveToNext() && !cancelled) {
+                    w.write("  <sms protocol=\"" + esc(c.getString(6)) + "\" address=\"" + esc(c.getString(0))
+                            + "\" date=\"" + c.getLong(1) + "\" type=\"" + c.getInt(3)
+                            + "\" subject=\"null\" body=\"" + esc(c.getString(4))
+                            + "\" toa=\"null\" sc_toa=\"null\" service_center=\"" + esc(c.getString(7))
+                            + "\" read=\"" + c.getInt(5) + "\" status=\"" + c.getInt(8)
+                            + "\" locked=\"0\" date_sent=\"" + c.getLong(2)
+                            + "\" readable_date=\"\" contact_name=\"(Unknown)\" />\n");
+                    count++;
+                }
+                w.write("</smses>\n");
+            }
+            if (cancelled) return;
+            String hash = hex(md.digest());
+            SharedPreferences p = ctx.getSharedPreferences("state", Context.MODE_PRIVATE);
+            if (hash.equals(p.getString("smsHash", ""))) {
+                Status.log("Messages unchanged (" + count + ")");
+                return;
+            }
+            String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+            try (InputStream in = new FileInputStream(f)) {
+                s3.put("messages/sms-" + stamp + ".xml", in, f.length(), "application/xml");
+            }
+            p.edit().putString("smsHash", hash).apply();
+            uploaded++;
+            Status.log("Backed up " + count + " text messages");
+        } catch (SecurityException e) {
+            Status.log("No permission to read messages (see note in app info: allow restricted settings)");
+            failed++;
+        } catch (Exception e) {
+            Status.log("Messages failed: " + e.getMessage());
+            failed++;
+        } finally {
+            if (f != null) f.delete();
+        }
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "null";
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            switch (ch) {
+                case '&': sb.append("&amp;"); break;
+                case '<': sb.append("&lt;"); break;
+                case '>': sb.append("&gt;"); break;
+                case '"': sb.append("&quot;"); break;
+                case '\'': sb.append("&apos;"); break;
+                case '\n': sb.append("&#10;"); break;
+                case '\r': sb.append("&#13;"); break;
+                case '\t': sb.append("&#9;"); break;
+                default:
+                    // drop control chars that are illegal in XML 1.0
+                    if (ch >= 0x20 || ch == 0) { if (ch != 0) sb.append(ch); }
+            }
+        }
+        return sb.toString();
     }
 
     private static String hex(byte[] b) {
