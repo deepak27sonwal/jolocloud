@@ -122,7 +122,22 @@
     applied = { view: '', list: null, chat: null, others: '' };
   }
 
+  // The login screen ("Scan to log in" + QR code) must be left completely alone: it is not a chat layout.
+  function isLoginPage() {
+    if (document.getElementById('side') || document.getElementById('pane-side')) return false;
+    if (document.querySelector('canvas[aria-label*="QR" i],[data-ref],[data-testid="qrcode"],[data-testid="qr-code"]')) return true;
+    var t = (document.body && document.body.innerText) || '';
+    return /scan to log in|log in with phone number|use whatsapp on your computer|link with phone number/i.test(t);
+  }
+
   function apply() {
+    if (isLoginPage()) {
+      if (applied.view || document.querySelector('[data-mw]')) { clearMarks(); document.documentElement.removeAttribute('data-mw-view'); }
+      row = null; kids0 = [];
+      if (attached(backBtn)) backBtn.style.display = 'none';
+      notify('none');
+      return;
+    }
     if (!(attached(row) && kids0.length && kids0.every(attached))) {
       clearMarks();
       if (!detect()) { notify('none'); return; }

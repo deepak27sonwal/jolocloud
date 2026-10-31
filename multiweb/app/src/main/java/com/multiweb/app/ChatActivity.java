@@ -392,6 +392,7 @@ public class ChatActivity extends Activity {
         l.addView(av, new android.widget.LinearLayout.LayoutParams((int) (96 * d), (int) (96 * d)));
         android.widget.TextView n = new android.widget.TextView(this);
         n.setText(account);
+        n.setGravity(android.view.Gravity.CENTER);
         n.setTextColor(android.graphics.Color.WHITE);
         n.setTextSize(22);
         n.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -399,6 +400,7 @@ public class ChatActivity extends Activity {
         l.addView(n);
         android.widget.TextView s = new android.widget.TextView(this);
         s.setText("Connecting to WhatsApp Web…");
+        s.setGravity(android.view.Gravity.CENTER);
         s.setTextColor(0xCCFFFFFF);
         s.setTextSize(14);
         l.addView(s);
