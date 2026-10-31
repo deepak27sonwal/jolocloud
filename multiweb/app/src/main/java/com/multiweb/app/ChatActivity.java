@@ -56,7 +56,8 @@ public class ChatActivity extends Activity {
     private FrameLayout root;
     private android.view.View splash;
     private int accent = 0xFF00897B;
-    private boolean wide = false;      // false = Auto (page adapts to the real screen width)
+    private int mode = 0;               // 0 = Phone (one pane at a time), 1 = Desktop (zoomed out), 2 = Original
+    private String mwScript;
     private int textZoom = 100;
     private android.content.SharedPreferences ui;
 
@@ -69,7 +70,7 @@ public class ChatActivity extends Activity {
         if (getActionBar() != null) getActionBar().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(accent));
         getWindow().setStatusBarColor(darken(accent));
         ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
-        wide = ui.getBoolean("desktop", false);
+        mode = ui.getInt("mode", 0);
         textZoom = ui.getInt("zoom", 100);
 
         root = new FrameLayout(this);
@@ -100,8 +101,8 @@ public class ChatActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setUserAgentString(DESKTOP_UA);           // WhatsApp Web refuses mobile user agents
-        s.setUseWideViewPort(wide);                 // compact (phone-width) layout unless toggled
-        s.setLoadWithOverviewMode(wide);
+        s.setUseWideViewPort(mode == 1);                 // compact (phone-width) layout unless toggled
+        s.setLoadWithOverviewMode(mode == 1);
         s.setTextZoom(textZoom);
         s.setSupportZoom(true);
         s.setBuiltInZoomControls(true);
@@ -119,7 +120,7 @@ public class ChatActivity extends Activity {
             return true; // links to other sites open in the normal browser
         }
         @Override public void onPageStarted(WebView v, String u, Bitmap f) { bar.setVisibility(android.view.View.VISIBLE); }
-        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); }
+        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); injectPhoneLayout(); }
     }
 
     private class Chrome extends WebChromeClient {
@@ -283,7 +284,8 @@ public class ChatActivity extends Activity {
     // ------------------------------------------------------------ menu / lifecycle
     @Override public boolean onCreateOptionsMenu(Menu m) {
         m.add(0, 1, 0, "Reload");
-        m.add(0, 2, 1, wide ? "Layout: Desktop (tap for Auto)" : "Layout: Auto (tap for Desktop)");
+        m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
+        m.add(0, 6, 1, "Show chat list");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
         m.add(0, 3, 4, "Log out & clear this account");
@@ -294,11 +296,16 @@ public class ChatActivity extends Activity {
         switch (i.getItemId()) {
             case 1: web.reload(); return true;
             case 2:
-                wide = !wide;
-                ui.edit().putBoolean("desktop", wide).apply();
+                mode = (mode + 1) % 3;
+                ui.edit().putInt("mode", mode).apply();
+                Toast.makeText(this, new String[]{"Phone layout", "Desktop layout", "Original layout"}[mode],
+                        Toast.LENGTH_SHORT).show();
                 applySettings();
                 web.reload();
                 invalidateOptionsMenu();
+                return true;
+            case 6:
+                web.evaluateJavascript("window.__mw&&window.__mw.back()", null);
                 return true;
             case 4:
             case 5:
@@ -331,7 +338,30 @@ public class ChatActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); web.saveState(out); }
 
     @Override public void onBackPressed() {
+        if (mode == 0) {   // in a conversation, Back returns to the chat list first
+            web.evaluateJavascript("(window.__mw&&window.__mw.back())===true", r -> {
+                if (!"true".equals(r)) goBackOrHide();
+            });
+        } else {
+            goBackOrHide();
+        }
+    }
+
+    private void goBackOrHide() {
         if (web.canGoBack()) web.goBack(); else moveTaskToBack(true);
+    }
+
+    /** Phone mode: reshapes WhatsApp Web's two-pane desktop layout into one pane at a time. */
+    private void injectPhoneLayout() {
+        if (mode != 0) return;
+        try {
+            if (mwScript == null) {
+                try (java.io.InputStream in = getAssets().open("mw.js")) {
+                    mwScript = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+            web.evaluateJavascript(mwScript, null);
+        } catch (java.io.IOException ignored) { }
     }
 
     @Override protected void onPause() {
