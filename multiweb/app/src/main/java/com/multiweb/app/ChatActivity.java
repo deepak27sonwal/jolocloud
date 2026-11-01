@@ -59,13 +59,6 @@ public class ChatActivity extends Activity {
     private int accent = 0xFF00897B;
     private int mode = 0;               // 0 = Phone (one pane at a time), 1 = Desktop (zoomed out), 2 = Original
     private String mwScript;
-    private android.widget.LinearLayout navBar;
-    private final android.view.View[] navPill = new android.view.View[4];
-    private final android.widget.ImageView[] navIcon = new android.widget.ImageView[4];
-    private final android.widget.TextView[] navLabel = new android.widget.TextView[4];
-    private android.widget.TextView chatsBadge;
-    private int activeTab = 0;
-    private boolean railBarMode = false;   // true = use WhatsApp's own icon strip as the bottom bar
     private int textZoom = 100;
     private android.content.SharedPreferences ui;
 
@@ -79,7 +72,6 @@ public class ChatActivity extends Activity {
         getWindow().setStatusBarColor(darken(accent));
         ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
         mode = ui.getInt("mode", 0);
-        railBarMode = ui.getBoolean("railbar", false);
         textZoom = ui.getInt("zoom", 100);
 
         root = new FrameLayout(this);
@@ -92,13 +84,7 @@ public class ChatActivity extends Activity {
         splash = buildSplash();
         root.addView(splash, new FrameLayout.LayoutParams(-1, -1));
         web.postDelayed(this::hideSplash, 9000); // never leave the loading screen up forever
-        android.widget.LinearLayout outer = new android.widget.LinearLayout(this);
-        outer.setOrientation(android.widget.LinearLayout.VERTICAL);
-        outer.addView(root, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
-        navBar = buildNav();
-        navBar.setVisibility(android.view.View.GONE);   // shown by the page script once the chat list is up
-        outer.addView(navBar, new android.widget.LinearLayout.LayoutParams(-1, -2));
-        setContentView(outer);
+        setContentView(root);
 
         applySettings();
         CookieManager.getInstance().setAcceptCookie(true);
@@ -145,7 +131,6 @@ public class ChatActivity extends Activity {
         @Override public void onReceivedTitle(WebView v, String title) {
             Matcher m = Pattern.compile("^\\((\\d+)\\)").matcher(title == null ? "" : title);
             int n = m.find() ? Integer.parseInt(m.group(1)) : 0;
-            setBadge(n);
             if (n > lastUnread) notifyUnread(n);
             lastUnread = n;
         }
@@ -243,23 +228,10 @@ public class ChatActivity extends Activity {
         applyView(v);
     }
 
-    private void updateNavVisibility() {
-        navBar.setVisibility(mode == 0 && !railBarMode && "list".equals(lastView) ? View.VISIBLE : View.GONE);
-    }
-
-    private void setRailBar(boolean on, String why) {
-        railBarMode = on;
-        ui.edit().putBoolean("railbar", on).apply();
-        web.evaluateJavascript("window.__mw&&window.__mw.railBar(" + on + ")", null);
-        updateNavVisibility();
-        if (why != null) Toast.makeText(this, why, Toast.LENGTH_LONG).show();
-    }
-
     /** Only acts when the view really changes: each show/hide of the bars resizes the page. */
     private void applyView(String v) {
         if (v.equals(lastView)) return;
         lastView = v;
-        updateNavVisibility();
         if (getActionBar() != null) {
             if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
         }
@@ -267,10 +239,6 @@ public class ChatActivity extends Activity {
 
     private class Bridge {
         @JavascriptInterface public void view(String v) { runOnUiThread(() -> setView(v)); }
-
-        @JavascriptInterface public void navFailed(String tab) {
-            runOnUiThread(() -> { if (!railBarMode) setRailBar(true, "Switched to WhatsApp's own tab bar (the app's tabs could not open that page)."); });
-        }
 
         @JavascriptInterface public void save(String b64, String mime, String name) {
             try {
@@ -307,92 +275,6 @@ public class ChatActivity extends Activity {
                 .setContentIntent(pi).setAutoCancel(true).build());
     }
 
-
-    // ------------------------------------------------------------ WhatsApp-style bottom bar
-    private static final String[] TABS = {"chats", "updates", "communities", "calls"};
-    private static final String[] TAB_LABELS = {"Chats", "Updates", "Communities", "Calls"};
-    private static final int[] TAB_ICONS = {R.drawable.ic_chat, R.drawable.ic_updates, R.drawable.ic_people, R.drawable.ic_call};
-
-    private android.widget.LinearLayout buildNav() {
-        float d = getResources().getDisplayMetrics().density;
-        android.widget.LinearLayout bar = new android.widget.LinearLayout(this);
-        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        bar.setBackgroundColor(getColor(R.color.surface));
-        bar.setElevation(8 * d);
-        bar.setPadding(0, (int) (8 * d), 0, (int) (8 * d));
-        for (int i = 0; i < TABS.length; i++) {
-            final int idx = i;
-            android.widget.LinearLayout item = new android.widget.LinearLayout(this);
-            item.setOrientation(android.widget.LinearLayout.VERTICAL);
-            item.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
-            android.widget.FrameLayout top = new android.widget.FrameLayout(this);
-            View pill = new View(this);
-            android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
-            g.setCornerRadius(16 * d);
-            g.setColor(getColor(R.color.pill));
-            pill.setBackground(g);
-            top.addView(pill, new android.widget.FrameLayout.LayoutParams((int) (56 * d), (int) (32 * d),
-                    android.view.Gravity.CENTER));
-            android.widget.ImageView icon = new android.widget.ImageView(this);
-            icon.setImageResource(TAB_ICONS[i]);
-            top.addView(icon, new android.widget.FrameLayout.LayoutParams((int) (24 * d), (int) (24 * d),
-                    android.view.Gravity.CENTER));
-            if (i == 0) {
-                chatsBadge = new android.widget.TextView(this);
-                chatsBadge.setTextColor(android.graphics.Color.WHITE);
-                chatsBadge.setTextSize(10);
-                chatsBadge.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-                chatsBadge.setGravity(android.view.Gravity.CENTER);
-                chatsBadge.setPadding((int) (5 * d), 0, (int) (5 * d), 0);
-                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-                bg.setCornerRadius(10 * d);
-                bg.setColor(getColor(R.color.badge));
-                chatsBadge.setBackground(bg);
-                chatsBadge.setVisibility(android.view.View.GONE);
-                android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(-2,
-                        (int) (18 * d), android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
-                bp.setMargins((int) (30 * d), (int) (-6 * d), 0, 0);
-                top.addView(chatsBadge, bp);
-            }
-            item.addView(top, new android.widget.LinearLayout.LayoutParams(-1, (int) (32 * d)));
-            android.widget.TextView label = new android.widget.TextView(this);
-            label.setText(TAB_LABELS[i]);
-            label.setGravity(android.view.Gravity.CENTER);
-            label.setTextSize(12);
-            label.setPadding(0, (int) (4 * d), 0, 0);
-            item.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
-            navPill[i] = pill; navIcon[i] = icon; navLabel[i] = label;
-            item.setOnClickListener(v -> {
-                boolean changed = idx != activeTab;
-                activeTab = idx;
-                paintNav();
-                web.evaluateJavascript("window.__mw?String(window.__mw.nav('" + TABS[idx] + "'," + changed + ")):'nojs'", r -> {
-                    if (r != null && !r.contains("true") && !railBarMode)
-                        setRailBar(true, "Couldn't find the " + TAB_LABELS[idx] + " button. Switched to WhatsApp's own tab bar.");
-                });
-            });
-            bar.addView(item, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
-        }
-        paintNav();
-        return bar;
-    }
-
-    private void paintNav() {
-        for (int i = 0; i < TABS.length; i++) {
-            boolean on = i == activeTab;
-            navPill[i].setVisibility(on ? android.view.View.VISIBLE : android.view.View.INVISIBLE);
-            int col = getColor(on ? R.color.text : R.color.subtext);
-            navIcon[i].setColorFilter(col);
-            navLabel[i].setTextColor(col);
-            navLabel[i].setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
-        }
-    }
-
-    private void setBadge(int n) {
-        if (chatsBadge == null) return;
-        chatsBadge.setText(n > 99 ? "99+" : String.valueOf(n));
-        chatsBadge.setVisibility(n > 0 ? android.view.View.VISIBLE : android.view.View.GONE);
-    }
 
     // ------------------------------------------------------------ loading screen
     private android.view.View buildSplash() {
@@ -457,8 +339,6 @@ public class ChatActivity extends Activity {
         m.add(0, 1, 0, "Reload");
         m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
         m.add(0, 6, 1, "Show chat list");
-        m.add(0, 8, 4, "WhatsApp settings");
-        m.add(0, 9, 4, railBarMode ? "Tab bar: WhatsApp's own (tap for MultiWeb)" : "Tab bar: MultiWeb (tap for WhatsApp's own)");
         m.add(0, 7, 5, "Layout diagnostics");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
@@ -477,13 +357,6 @@ public class ChatActivity extends Activity {
                 applySettings();
                 web.reload();
                 invalidateOptionsMenu();
-                return true;
-            case 9:
-                setRailBar(!railBarMode, railBarMode ? "Using MultiWeb tab bar" : "Using WhatsApp's own tab bar");
-                invalidateOptionsMenu();
-                return true;
-            case 8:
-                web.evaluateJavascript("window.__mw&&window.__mw.nav('settings')", null);
                 return true;
             case 7:
                 web.evaluateJavascript("window.__mw?window.__mw.debug():'Phone-mode script is not running on this page'", r -> {
@@ -556,7 +429,6 @@ public class ChatActivity extends Activity {
                 }
             }
             web.evaluateJavascript(mwScript, null);
-            web.evaluateJavascript("window.__mw&&window.__mw.railBar(" + railBarMode + ")", null);
         } catch (java.io.IOException ignored) { }
     }
 

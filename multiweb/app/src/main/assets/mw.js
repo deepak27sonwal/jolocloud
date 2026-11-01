@@ -15,6 +15,8 @@
     '[data-mw-anc]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
     '[data-mw=row]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
     '[data-mw=other]{display:none!important}' +
+    '[data-mw=strip]{flex:0 0 auto!important}' +
+    'html[data-mw-view=chat] [data-mw=strip]{display:none!important}' +
     '[data-mw=list]{flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
     '[data-mw=chat]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important}' +
     '[data-mw-fit]{max-width:100%!important;min-width:0!important}' +
@@ -22,14 +24,9 @@
     '[data-mw-pass]{pointer-events:none!important}' +
     '[data-mw-shrink]{min-width:0!important;flex:1 1 0!important;overflow:hidden!important;text-overflow:ellipsis}' +
     '[data-mw=chat] [data-id],[data-mw=chat] .message-in,[data-mw=chat] .message-out{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important}' +
-    'html[data-mw-railbar][data-mw-view=list] [data-mw=other]{display:flex!important;flex-direction:row!important;position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;width:100%!important;max-width:none!important;height:64px!important;min-height:0!important;z-index:2147483000!important;background:#fff!important;box-shadow:0 -2px 8px rgba(0,0,0,.18)!important;align-items:center!important;justify-content:space-around!important;overflow:hidden!important}' +
-    'html[data-mw-railbar][data-mw-view=list] [data-mw-rg]:not([data-mw=other]){display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-around!important;flex:1 1 auto!important;width:auto!important;height:100%!important;min-width:0!important;max-width:none!important;padding:0!important;margin:0!important}' +
-    'html[data-mw-railbar][data-mw-view=list] [data-mw=list]{padding-bottom:64px!important;box-sizing:border-box!important}' +
-    '@media (prefers-color-scheme:dark){html[data-mw-railbar][data-mw-view=list] [data-mw=other]{background:#111b21!important}}' +
     'html[data-mw-view=chat] [data-mw=list]{display:none!important}' +
     'html[data-mw-view=list] [data-mw=chat]{display:none!important}' +
     'html[data-mw-view=chat] [data-mw=chat] header{padding-left:46px!important;box-sizing:border-box!important}' +
-    'html[data-mw-view=list] [aria-label="New chat"]{position:fixed!important;right:16px;bottom:84px;z-index:50;width:56px;height:56px;border-radius:16px;box-shadow:0 3px 8px rgba(0,0,0,.3)}' +
     '#mw-back{position:fixed;left:4px;top:14px;width:40px;height:40px;z-index:2147483647;display:none;align-items:center;justify-content:center;font:400 26px/1 sans-serif;color:#54656f}' +
     '@media (prefers-color-scheme:dark){#mw-back{color:#aebac1}}';
   var style = document.createElement('style');
@@ -42,6 +39,7 @@
                 '[data-animate-modal-popup],[data-testid*="emoji"],[data-testid*="attach"],[data-testid*="popup"],[data-testid*="menu"]';
   function overlayOpen() { return !!document.querySelector(OVERLAY); }
 
+  var kidW = new WeakMap();
   var row = null, kids0 = [], cur = { list: null, chat: null, others: [], hasChat: false };
   var applied = { view: '', list: null, chat: null, others: '' };
   var forceList = false, lastChatOpen = false, lastMain = null, timer = null, backBtn = null, lastNotified = '';
@@ -81,6 +79,7 @@
     if (!row) return false;
     // full-height children count even when squeezed to zero width (flex rows stretch every child to the row height)
     kids0 = kidsOf(row).filter(function (k) { return k.offsetHeight > 100; });
+    kids0.forEach(function (k) { kidW.set(k, k.offsetWidth); });
     return kids0.length >= 2;
   }
 
@@ -121,9 +120,9 @@
   }
 
   function clearMarks() {
-    Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit],[data-mw-vis],[data-mw-pass],[data-mw-shrink],[data-mw-rg]'), function (e) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit],[data-mw-vis],[data-mw-pass],[data-mw-shrink]'), function (e) {
       e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-fit');
-      e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink'); e.removeAttribute('data-mw-rg');
+      e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink');
     });
     applied = { view: '', list: null, chat: null, others: '' };
   }
@@ -196,12 +195,11 @@
       row.setAttribute('data-mw', 'row');
       cur.list.setAttribute('data-mw', 'list');
       cur.chat.setAttribute('data-mw', 'chat');
-      cur.others.forEach(function (r) { r.setAttribute('data-mw', 'other'); });
+      cur.others.forEach(function (r) { r.setAttribute('data-mw', (kidW.get(r) || 0) <= 120 ? 'strip' : 'other'); });
       [row, cur.chat].forEach(function (start) {
         for (var a = start.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
       });
       document.documentElement.setAttribute('data-mw-view', view);
-      if (railBarOn) markRailGroups();
       applied = { view: view, list: cur.list, chat: cur.chat, others: othersSig };
     }
     ensureBackBtn().style.display = view === 'chat' ? 'flex' : 'none';
@@ -344,110 +342,6 @@
     return true;
   }
 
-  // ---------------------------------------------------------------- bottom-bar navigation
-  // Finds WhatsApp's own tab button by what it is called (aria-label, title, test id, icon name or visible text),
-  // wherever it lives on the page (the icon strip is hidden in phone mode, but hidden buttons still work).
-  var TABS = {
-    chats:       { exact: /^(chats?|chat list|all chats)$/, loose: /^chats?\b/, icon: /^(chats?|chat-outline|chats-outline|chats-filled)/, not: /new|archived|select|starred/ },
-    updates:     { exact: /^(updates?|status|status updates?)$/, loose: /(updates?|status|channels?)/, icon: /^(status|updates?|channels?)/, not: /read|unread|typing|delivery/ },
-    communities: { exact: /^communit(y|ies)$/, loose: /communit/, icon: /communit/, not: /new communit/ },
-    calls:       { exact: /^calls?$/, loose: /^calls?\b/, icon: /^calls?($|-outline|-filled|s)/, not: /voice|video|missed|new call/ },
-    settings:    { exact: /^settings?$/, loose: /settings?/, icon: /settings?/, not: /^$/ }
-  };
-  function labelsOf(el) {
-    var out = [];
-    ['aria-label', 'title', 'data-testid', 'data-tab', 'name'].forEach(function (a) { var v = el.getAttribute && el.getAttribute(a); if (v) out.push(v.toLowerCase().trim()); });
-    var ic = el.querySelector && el.querySelector('[data-icon]');
-    if (ic) out.push(('icon:' + ic.getAttribute('data-icon')).toLowerCase());
-    if (el.getAttribute && el.getAttribute('data-icon')) out.push(('icon:' + el.getAttribute('data-icon')).toLowerCase());
-    var tx = (el.textContent || '').trim().toLowerCase();
-    if (tx && tx.length <= 24) out.push(tx);
-    return out;
-  }
-  function clickableOf(el) { return el.closest('button,[role=button],[role=tab],a,[tabindex]') || el; }
-  function findTab(tab) {
-    var spec = TABS[tab]; if (!spec) return null;
-    var cands = document.querySelectorAll('[aria-label],[title],[data-testid],[data-icon],[role=tab],[role=button],[tabindex],button,a[href]'), best = null, bestScore = 0;
-    for (var i = 0; i < cands.length && i < 3000; i++) {
-      var el = cands[i];
-      if ((cur.chat && cur.chat.contains(el)) || el.closest('#pane-side,[data-mw=chat]')) continue;   // not controls of the open conversation / chat rows
-      var score = 0;
-      labelsOf(el).forEach(function (l) {
-        var isIcon = l.indexOf('icon:') === 0, v = isIcon ? l.slice(5) : l;
-        if (spec.not.test(v)) return;
-        var sc = isIcon ? (spec.icon.test(v) ? 1 : 0) : (spec.exact.test(v) ? 4 : (spec.loose.test(v) ? 2 : 0));
-        if (sc > score) score = sc;
-      });
-      if (!score) continue;
-      var host = clickableOf(el);
-      if (cur.others.some(function (o) { return o.contains(host); })) score += 1;      // prefer the icon strip / bottom bar
-      if (score > bestScore) { bestScore = score; best = host; }
-    }
-    return best;
-  }
-  var lastNav = '', railBarOn = false;
-  // A real finger produces pointer + mouse events, not just "click": send the whole sequence.
-  function realClick(el) {
-    var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
-    var o = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
-    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) {
-      var ev;
-      if (t.indexOf('pointer') === 0 && window.PointerEvent) ev = new PointerEvent(t, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: t === 'pointerdown' ? 1 : 0 });
-      else ev = new MouseEvent(t, o);
-      el.dispatchEvent(ev);
-    });
-  }
-  function paneSig() {
-    var side = document.getElementById('side') || (cur.list || document.body);
-    var t = side.innerText || '';
-    return side.getElementsByTagName('*').length + '|' + t.length + '|' + t.slice(0, 80);
-  }
-  function nav(tab, check) {
-    var el = findTab(tab);
-    lastNav = tab + ' -> ' + (el ? describe(el) + ' [' + labelsOf(el).slice(0, 3).join(' | ') + ']' : 'NOT FOUND');
-    if (!el) return false;
-    var before = paneSig();
-    realClick(el);
-    forceList = true;
-    setTimeout(apply, 120);
-    if (check) {           // tapped a different tab but nothing changed on the page: report it so the app can fall back
-      setTimeout(function () {
-        if (paneSig() === before) { lastNav += '  (no visible effect)'; try { if (window.Android && window.Android.navFailed) window.Android.navFailed(tab); } catch (e) {} }
-      }, 900);
-    }
-    return true;
-  }
-
-  // WhatsApp's own icon strip, shown as a bottom bar: real taps on WhatsApp's own buttons (always functional)
-  function markRailGroups() {
-    var ok = 'button,[role=button],[role=tab],[tabindex],a';
-    cur.others.forEach(function (o) {
-      [o].concat(Array.prototype.slice.call(o.querySelectorAll('div,nav,ul,section,header'))).forEach(function (g) {
-        var kids = Array.prototype.filter.call(g.children, function (c) { return c.matches(ok) || c.querySelector(ok); });
-        if (kids.length >= 2) g.setAttribute('data-mw-rg', '1');
-      });
-    });
-  }
-  function railBar(on) {
-    railBarOn = !!on;
-    if (railBarOn) { document.documentElement.setAttribute('data-mw-railbar', '1'); if (row && roles()) markRailGroups(); }
-    else {
-      document.documentElement.removeAttribute('data-mw-railbar');
-      Array.prototype.forEach.call(document.querySelectorAll('[data-mw-rg]'), function (e) { e.removeAttribute('data-mw-rg'); });
-    }
-    return railBarOn;
-  }
-  // everything that looks like a tab button in the (hidden) icon strip: used by Layout diagnostics
-  function navScan() {
-    var out = [];
-    cur.others.forEach(function (o) {
-      Array.prototype.slice.call(o.querySelectorAll('button,[role=button],[role=tab],a,[tabindex]')).slice(0, 14).forEach(function (e) {
-        out.push('  ' + describe(e) + ' [' + labelsOf(e).slice(0, 3).join(' | ') + ']');
-      });
-    });
-    return out;
-  }
-
   function describe(n) {
     if (!n) return '(none)';
     var c = typeof n.className === 'string' ? n.className.split(' ')[0] : '';
@@ -460,9 +354,6 @@
                'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat + ', overlayOpen: ' + overlayOpen(),
                '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'), 'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
-    out.push('last tab tap: ' + (lastNav || '(none yet)'));
-    out.push('icon-strip buttons:');
-    navScan().slice(0, 10).forEach(function (l) { out.push(l); });
     out.push('tap audit: checked ' + lastAudit.checked + ', blocked ' + lastAudit.blocked + ', repaired ' + lastAudit.fixed);
     lastAudit.notes.slice(0, 6).forEach(function (n) { out.push('  ' + n); });
     if (cur.chat) {
@@ -483,6 +374,6 @@
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit, audit: audit, railBar: railBar };
+  window.__mw = { refresh: apply, back: back, debug: debug, fit: fit, audit: audit };
   apply();
 })();
