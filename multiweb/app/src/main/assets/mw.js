@@ -11,6 +11,7 @@
   var CSS =
     'html,body,#app{min-width:0!important;max-width:100vw!important;overflow-x:hidden!important;-webkit-text-size-adjust:100%}' +
     'html{touch-action:manipulation}' +
+    '#app[data-mw-lscale]{transform:scale(var(--mw-ls))!important;transform-origin:0 0!important;width:calc(100% / var(--mw-ls))!important;max-width:none!important;min-width:0!important}' +
     '[data-mw-anc]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
     '[data-mw=row]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
     '[data-mw=other]{display:none!important}' +
@@ -131,14 +132,49 @@
     return /scan to log in|log in with phone number|use whatsapp on your computer|link with phone number/i.test(t);
   }
 
+  // ---- Login screen: it has no popups, so if it is wider than the phone it is simply scaled down to fit.
+  var loginRoot = null, loginScale = 0;
+  function loginFit() {
+    var root = document.getElementById('app');
+    if (!root || !isLoginPage()) return;
+    var vw = document.documentElement.clientWidth;
+    root.removeAttribute('data-mw-lscale'); root.style.removeProperty('--mw-ls');   // measure unscaled
+    var els = root.querySelectorAll('*'), left = 0, right = vw;
+    for (var i = 0; i < els.length && i < 3000; i++) {
+      var r = els[i].getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (getComputedStyle(els[i]).position === 'fixed') continue;
+      if (r.right > right) right = r.right;
+      if (r.left < left) left = r.left;
+    }
+    var need = right - left;
+    loginRoot = root;
+    if (need > vw + 4) {
+      loginScale = Math.max(0.5, vw / need);
+      root.style.setProperty('--mw-ls', String(loginScale));
+      root.setAttribute('data-mw-lscale', '1');
+    } else {
+      loginScale = 0;
+    }
+  }
+  function clearLoginScale() {
+    var root = document.getElementById('app');
+    if (root) { root.removeAttribute('data-mw-lscale'); root.style.removeProperty('--mw-ls'); }
+    loginRoot = null; loginScale = 0;
+  }
+
   function apply() {
     if (isLoginPage()) {
       if (applied.view || document.querySelector('[data-mw]')) { clearMarks(); document.documentElement.removeAttribute('data-mw-view'); }
       row = null; kids0 = [];
       if (attached(backBtn)) backBtn.style.display = 'none';
       notify('none');
+      var lr = document.getElementById('app');
+      if (lr && lr !== loginRoot) { setTimeout(loginFit, 350); setTimeout(loginFit, 1500); loginRoot = lr; }   // new login render: fit it once
+      else if (lr && loginScale && !lr.hasAttribute('data-mw-lscale')) { lr.style.setProperty('--mw-ls', String(loginScale)); lr.setAttribute('data-mw-lscale', '1'); }
       return;
     }
+    if (loginRoot) clearLoginScale();       // logged in: undo the login-screen scaling
     if (!(attached(row) && kids0.length && kids0.every(attached))) {
       clearMarks();
       if (!detect()) { notify('none'); return; }
@@ -281,7 +317,7 @@
   window.addEventListener('resize', function (e) {
     if (window.innerWidth === lastW) { e.stopImmediatePropagation(); return; }
     lastW = window.innerWidth;
-    clearTimeout(timer); timer = setTimeout(function () { clearMarkFits(); scheduleRepair(); }, 300);
+    clearTimeout(timer); timer = setTimeout(function () { clearMarkFits(); scheduleRepair(); loginFit(); }, 300);
   }, true);
   function clearMarkFits() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-mw-fit]'), function (e) { e.removeAttribute('data-mw-fit'); });
