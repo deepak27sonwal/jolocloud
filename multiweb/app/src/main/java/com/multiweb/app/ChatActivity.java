@@ -61,6 +61,7 @@ public class ChatActivity extends Activity {
     private int accent = 0xFF00897B;
     private boolean wide = false;      // false = Auto (page adapts to the real screen width)
     private int textZoom = 100;
+    private boolean chatFit = true;       // an open chat is shown alone at full width (menu switch)
     private android.content.SharedPreferences ui;
 
     @Override protected void onCreate(Bundle saved) {
@@ -74,6 +75,7 @@ public class ChatActivity extends Activity {
         ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
         wide = ui.getBoolean("desktop", false);
         textZoom = ui.getInt("zoom", 100);
+        chatFit = ui.getBoolean("chatfit", true);
 
         root = new FrameLayout(this);
         web = new WebView(this);
@@ -354,6 +356,7 @@ public class ChatActivity extends Activity {
                 }
             }
             web.evaluateJavascript(attachScript, null);
+            web.evaluateJavascript("window.__mwFix&&window.__mwFix.setOn(" + chatFit + ")", null);
         } catch (java.io.IOException ignored) { }
     }
 
@@ -363,6 +366,7 @@ public class ChatActivity extends Activity {
         m.add(0, 2, 1, wide ? "Layout: Desktop (tap for Auto)" : "Layout: Auto (tap for Desktop)");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
+        m.add(0, 6, 3, chatFit ? "Chat fits screen: ON (tap to turn off)" : "Chat fits screen: OFF (tap to turn on)");
         m.add(0, 3, 4, "Log out & clear this account");
         return true;
     }
@@ -383,6 +387,13 @@ public class ChatActivity extends Activity {
                 ui.edit().putInt("zoom", textZoom).apply();
                 web.getSettings().setTextZoom(textZoom);
                 Toast.makeText(this, "Text size " + textZoom + "%", Toast.LENGTH_SHORT).show();
+                return true;
+            case 6:
+                chatFit = !chatFit;
+                ui.edit().putBoolean("chatfit", chatFit).apply();
+                web.evaluateJavascript("window.__mwFix&&window.__mwFix.setOn(" + chatFit + ")", null);
+                Toast.makeText(this, chatFit ? "Open chats now fit the screen" : "Chats use WhatsApp's own layout", Toast.LENGTH_SHORT).show();
+                invalidateOptionsMenu();
                 return true;
             case 3:
                 new AlertDialog.Builder(this).setTitle("Clear " + account + "?")
@@ -408,6 +419,12 @@ public class ChatActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); web.saveState(out); }
 
     @Override public void onBackPressed() {
+        web.evaluateJavascript("(window.__mwFix&&window.__mwFix.back())===true", r -> {
+            if (!"true".equals(r)) goBackOrHide();
+        });
+    }
+
+    private void goBackOrHide() {
         if (web.canGoBack()) web.goBack(); else moveTaskToBack(true);
     }
 

@@ -6,8 +6,8 @@ android {
         applicationId 'com.multiweb.app'
         minSdk 29
         targetSdk 34
-        versionCode 26
-        versionName '1.2.5'
+        versionCode 27
+        versionName '1.2.6'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
