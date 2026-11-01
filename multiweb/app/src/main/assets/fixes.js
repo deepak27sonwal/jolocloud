@@ -37,23 +37,43 @@
     }
   }).observe(document.body, { childList: true, subtree: true });
 
-  // ------------------------------------------------------------------ 2. no keyboard unless YOU tapped the message box
+  // ------------------------------------------------------------------ 2. keyboard only when YOU tap the message box
+  // WhatsApp focuses the message box on its own (opening a chat, after attach / emoji / send), and Android then opens the
+  // keyboard. The box is therefore marked inputmode="none" (focus works, but no on-screen keyboard) and switched to
+  // inputmode="text" only while a finger is on it.
   var lastTapAt = 0, lastTapInBox = false;
-  function isComposer(el) {
-    if (!el || !el.closest) return false;
-    var ce = el.closest('[contenteditable="true"],[contenteditable=""],textarea,input');
-    if (!ce) return false;
-    return !!ce.closest('footer') || /message|type a/i.test((ce.getAttribute('aria-label') || '') + ' ' + (ce.getAttribute('aria-placeholder') || '') + ' ' + (ce.getAttribute('title') || ''));
+  function composerOf(el) {
+    if (!el || !el.closest) return null;
+    var ce = el.closest('[contenteditable="true"],[contenteditable=""],textarea');
+    if (!ce) return null;
+    if (ce.closest('footer')) return ce;
+    var lab = (ce.getAttribute('aria-label') || '') + ' ' + (ce.getAttribute('aria-placeholder') || '') + ' ' + (ce.getAttribute('title') || '');
+    return /message|type a/i.test(lab) ? ce : null;
+  }
+  function protect(ce) { if (ce && ce.getAttribute('inputmode') !== 'none') ce.setAttribute('inputmode', 'none'); }
+  function allow(ce) { if (ce && ce.getAttribute('inputmode') !== 'text') ce.setAttribute('inputmode', 'text'); }
+  function protectAll(root) {
+    var list = (root.querySelectorAll ? root.querySelectorAll('footer [contenteditable],footer textarea,[contenteditable][aria-label*="essage" i]') : []);
+    for (var i = 0; i < list.length; i++) protect(list[i]);
+    if (root.nodeType === 1 && composerOf(root)) protect(composerOf(root));
   }
   ['touchstart', 'pointerdown', 'mousedown'].forEach(function (t) {
-    document.addEventListener(t, function (e) { lastTapAt = Date.now(); lastTapInBox = isComposer(e.target); }, true);
+    document.addEventListener(t, function (e) {
+      lastTapAt = Date.now();
+      var ce = composerOf(e.target);
+      lastTapInBox = !!ce;
+      if (ce) allow(ce);                                  // your tap: the keyboard is wanted
+    }, true);
   });
   document.addEventListener('focusin', function (e) {
-    if (!isComposer(e.target)) return;
-    if (lastTapInBox && Date.now() - lastTapAt < 3000) return;                // you tapped the box: keyboard wanted
-    if (Date.now() - lastTapAt < 900) {                                        // focus came from tapping something else
-      var el = e.target.closest('[contenteditable],textarea,input') || e.target;
-      setTimeout(function () { if (document.activeElement === el || el.contains(document.activeElement)) el.blur(); }, 0);
-    }
+    var ce = composerOf(e.target);
+    if (ce && !(lastTapInBox && Date.now() - lastTapAt < 3000)) protect(ce);   // focus not caused by your tap: no keyboard
   }, true);
+  document.addEventListener('focusout', function (e) { protect(composerOf(e.target)); }, true);
+  protectAll(document);
+  new MutationObserver(function (records) {                // composers that WhatsApp creates later
+    for (var i = 0; i < records.length; i++) for (var j = 0; j < records[i].addedNodes.length; j++) {
+      var n = records[i].addedNodes[j]; if (n.nodeType === 1) protectAll(n);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
 })();
