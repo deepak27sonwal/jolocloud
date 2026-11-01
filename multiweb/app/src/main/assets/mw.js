@@ -22,6 +22,10 @@
     '[data-mw-pass]{pointer-events:none!important}' +
     '[data-mw-shrink]{min-width:0!important;flex:1 1 0!important;overflow:hidden!important;text-overflow:ellipsis}' +
     '[data-mw=chat] [data-id],[data-mw=chat] .message-in,[data-mw=chat] .message-out{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important}' +
+    'html[data-mw-railbar][data-mw-view=list] [data-mw=other]{display:flex!important;flex-direction:row!important;position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;width:100%!important;max-width:none!important;height:64px!important;min-height:0!important;z-index:2147483000!important;background:#fff!important;box-shadow:0 -2px 8px rgba(0,0,0,.18)!important;align-items:center!important;justify-content:space-around!important;overflow:hidden!important}' +
+    'html[data-mw-railbar][data-mw-view=list] [data-mw-rg]:not([data-mw=other]){display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-around!important;flex:1 1 auto!important;width:auto!important;height:100%!important;min-width:0!important;max-width:none!important;padding:0!important;margin:0!important}' +
+    'html[data-mw-railbar][data-mw-view=list] [data-mw=list]{padding-bottom:64px!important;box-sizing:border-box!important}' +
+    '@media (prefers-color-scheme:dark){html[data-mw-railbar][data-mw-view=list] [data-mw=other]{background:#111b21!important}}' +
     'html[data-mw-view=chat] [data-mw=list]{display:none!important}' +
     'html[data-mw-view=list] [data-mw=chat]{display:none!important}' +
     'html[data-mw-view=chat] [data-mw=chat] header{padding-left:46px!important;box-sizing:border-box!important}' +
@@ -117,9 +121,9 @@
   }
 
   function clearMarks() {
-    Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit],[data-mw-vis],[data-mw-pass],[data-mw-shrink]'), function (e) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mw],[data-mw-anc],[data-mw-fit],[data-mw-vis],[data-mw-pass],[data-mw-shrink],[data-mw-rg]'), function (e) {
       e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-fit');
-      e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink');
+      e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink'); e.removeAttribute('data-mw-rg');
     });
     applied = { view: '', list: null, chat: null, others: '' };
   }
@@ -197,6 +201,7 @@
         for (var a = start.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
       });
       document.documentElement.setAttribute('data-mw-view', view);
+      if (railBarOn) markRailGroups();
       applied = { view: view, list: cur.list, chat: cur.chat, others: othersSig };
     }
     ensureBackBtn().style.display = view === 'chat' ? 'flex' : 'none';
@@ -344,7 +349,7 @@
   // wherever it lives on the page (the icon strip is hidden in phone mode, but hidden buttons still work).
   var TABS = {
     chats:       { exact: /^(chats?|chat list|all chats)$/, loose: /^chats?\b/, icon: /^(chats?|chat-outline|chats-outline|chats-filled)/, not: /new|archived|select|starred/ },
-    updates:     { exact: /^(updates?|status|status updates?)$/, loose: /(updates?|status)/, icon: /^(status|updates?)/, not: /read|unread|typing|delivery/ },
+    updates:     { exact: /^(updates?|status|status updates?)$/, loose: /(updates?|status|channels?)/, icon: /^(status|updates?|channels?)/, not: /read|unread|typing|delivery/ },
     communities: { exact: /^communit(y|ies)$/, loose: /communit/, icon: /communit/, not: /new communit/ },
     calls:       { exact: /^calls?$/, loose: /^calls?\b/, icon: /^calls?($|-outline|-filled|s)/, not: /voice|video|missed|new call/ },
     settings:    { exact: /^settings?$/, loose: /settings?/, icon: /settings?/, not: /^$/ }
@@ -380,15 +385,57 @@
     }
     return best;
   }
-  var lastNav = '';
-  function nav(tab) {
+  var lastNav = '', railBarOn = false;
+  // A real finger produces pointer + mouse events, not just "click": send the whole sequence.
+  function realClick(el) {
+    var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+    var o = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) {
+      var ev;
+      if (t.indexOf('pointer') === 0 && window.PointerEvent) ev = new PointerEvent(t, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: t === 'pointerdown' ? 1 : 0 });
+      else ev = new MouseEvent(t, o);
+      el.dispatchEvent(ev);
+    });
+  }
+  function paneSig() {
+    var side = document.getElementById('side') || (cur.list || document.body);
+    var t = side.innerText || '';
+    return side.getElementsByTagName('*').length + '|' + t.length + '|' + t.slice(0, 80);
+  }
+  function nav(tab, check) {
     var el = findTab(tab);
     lastNav = tab + ' -> ' + (el ? describe(el) + ' [' + labelsOf(el).slice(0, 3).join(' | ') + ']' : 'NOT FOUND');
     if (!el) return false;
-    el.click();
+    var before = paneSig();
+    realClick(el);
     forceList = true;
     setTimeout(apply, 120);
+    if (check) {           // tapped a different tab but nothing changed on the page: report it so the app can fall back
+      setTimeout(function () {
+        if (paneSig() === before) { lastNav += '  (no visible effect)'; try { if (window.Android && window.Android.navFailed) window.Android.navFailed(tab); } catch (e) {} }
+      }, 900);
+    }
     return true;
+  }
+
+  // WhatsApp's own icon strip, shown as a bottom bar: real taps on WhatsApp's own buttons (always functional)
+  function markRailGroups() {
+    var ok = 'button,[role=button],[role=tab],[tabindex],a';
+    cur.others.forEach(function (o) {
+      [o].concat(Array.prototype.slice.call(o.querySelectorAll('div,nav,ul,section,header'))).forEach(function (g) {
+        var kids = Array.prototype.filter.call(g.children, function (c) { return c.matches(ok) || c.querySelector(ok); });
+        if (kids.length >= 2) g.setAttribute('data-mw-rg', '1');
+      });
+    });
+  }
+  function railBar(on) {
+    railBarOn = !!on;
+    if (railBarOn) { document.documentElement.setAttribute('data-mw-railbar', '1'); if (row && roles()) markRailGroups(); }
+    else {
+      document.documentElement.removeAttribute('data-mw-railbar');
+      Array.prototype.forEach.call(document.querySelectorAll('[data-mw-rg]'), function (e) { e.removeAttribute('data-mw-rg'); });
+    }
+    return railBarOn;
   }
   // everything that looks like a tab button in the (hidden) icon strip: used by Layout diagnostics
   function navScan() {
@@ -436,6 +483,6 @@
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit, audit: audit };
+  window.__mw = { refresh: apply, back: back, debug: debug, nav: nav, fit: fit, audit: audit, railBar: railBar };
   apply();
 })();

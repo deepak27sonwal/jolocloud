@@ -65,6 +65,7 @@ public class ChatActivity extends Activity {
     private final android.widget.TextView[] navLabel = new android.widget.TextView[4];
     private android.widget.TextView chatsBadge;
     private int activeTab = 0;
+    private boolean railBarMode = false;   // true = use WhatsApp's own icon strip as the bottom bar
     private int textZoom = 100;
     private android.content.SharedPreferences ui;
 
@@ -78,6 +79,7 @@ public class ChatActivity extends Activity {
         getWindow().setStatusBarColor(darken(accent));
         ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
         mode = ui.getInt("mode", 0);
+        railBarMode = ui.getBoolean("railbar", false);
         textZoom = ui.getInt("zoom", 100);
 
         root = new FrameLayout(this);
@@ -241,11 +243,23 @@ public class ChatActivity extends Activity {
         applyView(v);
     }
 
+    private void updateNavVisibility() {
+        navBar.setVisibility(mode == 0 && !railBarMode && "list".equals(lastView) ? View.VISIBLE : View.GONE);
+    }
+
+    private void setRailBar(boolean on, String why) {
+        railBarMode = on;
+        ui.edit().putBoolean("railbar", on).apply();
+        web.evaluateJavascript("window.__mw&&window.__mw.railBar(" + on + ")", null);
+        updateNavVisibility();
+        if (why != null) Toast.makeText(this, why, Toast.LENGTH_LONG).show();
+    }
+
     /** Only acts when the view really changes: each show/hide of the bars resizes the page. */
     private void applyView(String v) {
         if (v.equals(lastView)) return;
         lastView = v;
-        navBar.setVisibility(mode == 0 && "list".equals(v) ? View.VISIBLE : View.GONE);
+        updateNavVisibility();
         if (getActionBar() != null) {
             if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
         }
@@ -253,6 +267,10 @@ public class ChatActivity extends Activity {
 
     private class Bridge {
         @JavascriptInterface public void view(String v) { runOnUiThread(() -> setView(v)); }
+
+        @JavascriptInterface public void navFailed(String tab) {
+            runOnUiThread(() -> { if (!railBarMode) setRailBar(true, "Switched to WhatsApp's own tab bar (the app's tabs could not open that page)."); });
+        }
 
         @JavascriptInterface public void save(String b64, String mime, String name) {
             try {
@@ -345,12 +363,12 @@ public class ChatActivity extends Activity {
             item.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
             navPill[i] = pill; navIcon[i] = icon; navLabel[i] = label;
             item.setOnClickListener(v -> {
+                boolean changed = idx != activeTab;
                 activeTab = idx;
                 paintNav();
-                web.evaluateJavascript("window.__mw?String(window.__mw.nav('" + TABS[idx] + "')):'nojs'", r -> {
-                    if (r != null && !r.contains("true"))
-                        Toast.makeText(this, TAB_LABELS[idx] + " is not available on this page yet. Check Layout diagnostics.",
-                                Toast.LENGTH_LONG).show();
+                web.evaluateJavascript("window.__mw?String(window.__mw.nav('" + TABS[idx] + "'," + changed + ")):'nojs'", r -> {
+                    if (r != null && !r.contains("true") && !railBarMode)
+                        setRailBar(true, "Couldn't find the " + TAB_LABELS[idx] + " button. Switched to WhatsApp's own tab bar.");
                 });
             });
             bar.addView(item, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
@@ -440,6 +458,7 @@ public class ChatActivity extends Activity {
         m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
         m.add(0, 6, 1, "Show chat list");
         m.add(0, 8, 4, "WhatsApp settings");
+        m.add(0, 9, 4, railBarMode ? "Tab bar: WhatsApp's own (tap for MultiWeb)" : "Tab bar: MultiWeb (tap for WhatsApp's own)");
         m.add(0, 7, 5, "Layout diagnostics");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
@@ -457,6 +476,10 @@ public class ChatActivity extends Activity {
                         Toast.LENGTH_SHORT).show();
                 applySettings();
                 web.reload();
+                invalidateOptionsMenu();
+                return true;
+            case 9:
+                setRailBar(!railBarMode, railBarMode ? "Using MultiWeb tab bar" : "Using WhatsApp's own tab bar");
                 invalidateOptionsMenu();
                 return true;
             case 8:
@@ -533,6 +556,7 @@ public class ChatActivity extends Activity {
                 }
             }
             web.evaluateJavascript(mwScript, null);
+            web.evaluateJavascript("window.__mw&&window.__mw.railBar(" + railBarMode + ")", null);
         } catch (java.io.IOException ignored) { }
     }
 
