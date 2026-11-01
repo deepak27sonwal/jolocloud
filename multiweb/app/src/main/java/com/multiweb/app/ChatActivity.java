@@ -18,7 +18,6 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.view.Menu;
-import android.view.View;
 import android.view.MenuItem;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -54,36 +53,20 @@ public class ChatActivity extends Activity {
     private PermissionRequest pendingPerm;
     private String account;
     private int lastUnread = 0;
-    private FrameLayout root;
-    private android.view.View splash;
-    private int accent = 0xFF00897B;
-    private int mode = 0;               // 0 = Phone (one pane at a time), 1 = Desktop (zoomed out), 2 = Original
-    private String mwScript;
-    private int textZoom = 100;
-    private android.content.SharedPreferences ui;
+    private boolean wide = false;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         account = getIntent().getStringExtra("name");
         if (account == null) account = "WhatsApp";
         setTitle(account);
-        accent = getIntent().getIntExtra("color", accent);
-        if (getActionBar() != null) getActionBar().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(accent));
-        getWindow().setStatusBarColor(darken(accent));
-        ui = getSharedPreferences("ui_" + getClass().getSimpleName(), MODE_PRIVATE);
-        mode = ui.getInt("mode", 0);
-        textZoom = ui.getInt("zoom", 100);
 
-        root = new FrameLayout(this);
+        FrameLayout root = new FrameLayout(this);
         web = new WebView(this);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(100);
         root.addView(bar, new FrameLayout.LayoutParams(-1, 8));
-        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE));
-        splash = buildSplash();
-        root.addView(splash, new FrameLayout.LayoutParams(-1, -1));
-        web.postDelayed(this::hideSplash, 9000); // never leave the loading screen up forever
         setContentView(root);
 
         applySettings();
@@ -102,12 +85,10 @@ public class ChatActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setUserAgentString(DESKTOP_UA);           // WhatsApp Web refuses mobile user agents
-        s.setUseWideViewPort(mode == 1);                 // compact (phone-width) layout unless toggled
-        s.setLoadWithOverviewMode(mode == 1);
-        s.setTextZoom(textZoom);
-        // Phone mode: no pinch / double-tap zoom, so taps on buttons are instant (use the Text size menu instead)
-        s.setSupportZoom(mode != 0);
-        s.setBuiltInZoomControls(mode != 0);
+        s.setUseWideViewPort(wide);                 // compact (phone-width) layout unless toggled
+        s.setLoadWithOverviewMode(wide);
+        s.setSupportZoom(true);
+        s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setAllowFileAccess(false);
@@ -122,7 +103,7 @@ public class ChatActivity extends Activity {
             return true; // links to other sites open in the normal browser
         }
         @Override public void onPageStarted(WebView v, String u, Bitmap f) { bar.setVisibility(android.view.View.VISIBLE); }
-        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); injectPhoneLayout(); }
+        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); }
     }
 
     private class Chrome extends WebChromeClient {
@@ -138,25 +119,8 @@ public class ChatActivity extends Activity {
         @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
             if (chooser != null) chooser.onReceiveValue(null);
             chooser = cb;
-            Intent i;
-            try {
-                i = p.createIntent();
-            } catch (Exception e) {
-                i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-            }
-            if (p.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            try {
-                startActivityForResult(i, REQ_FILE);
-            } catch (ActivityNotFoundException e) {
-                try {
-                    startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT)
-                            .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_FILE);
-                } catch (ActivityNotFoundException e2) {
-                    chooser = null;
-                    Toast.makeText(ChatActivity.this, "No file picker available", Toast.LENGTH_LONG).show();
-                    return false;
-                }
-            }
+            try { startActivityForResult(p.createIntent(), REQ_FILE); }
+            catch (ActivityNotFoundException e) { chooser = null; return false; }
             return true;
         }
 
@@ -188,20 +152,10 @@ public class ChatActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int code, int result, Intent data) {
-        if (code != REQ_FILE || chooser == null) return;
-        Uri[] files = null;
-        if (result == RESULT_OK && data != null) {
-            files = WebChromeClient.FileChooserParams.parseResult(result, data);
-            if (files == null && data.getData() != null) files = new Uri[]{data.getData()};
-            if (files != null) {
-                for (Uri u : files) {       // keep read access for the whole upload (large videos take a while)
-                    try { getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
-                    catch (Exception ignored) { }
-                }
-            }
+        if (code == REQ_FILE && chooser != null) {
+            chooser.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
+            chooser = null;
         }
-        chooser.onReceiveValue(files);
-        chooser = null;
     }
 
     // ------------------------------------------------------------ downloads (WhatsApp uses blob: URLs)
@@ -218,28 +172,7 @@ public class ChatActivity extends Activity {
                 + "');};r.readAsDataURL(x.response);};x.send();})()", null);
     }
 
-    private String lastView = "";
-    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable noneTask = () -> applyView("none");
-
-    private void setView(String v) {
-        if ("none".equals(v)) { uiHandler.postDelayed(noneTask, 900); return; }   // transient while WhatsApp re-renders
-        uiHandler.removeCallbacks(noneTask);
-        applyView(v);
-    }
-
-    /** Only acts when the view really changes: each show/hide of the bars resizes the page. */
-    private void applyView(String v) {
-        if (v.equals(lastView)) return;
-        lastView = v;
-        if (getActionBar() != null) {
-            if (mode == 0 && "chat".equals(v)) getActionBar().hide(); else getActionBar().show();
-        }
-    }
-
     private class Bridge {
-        @JavascriptInterface public void view(String v) { runOnUiThread(() -> setView(v)); }
-
         @JavascriptInterface public void save(String b64, String mime, String name) {
             try {
                 byte[] data = Base64.decode(b64, Base64.DEFAULT);
@@ -275,75 +208,11 @@ public class ChatActivity extends Activity {
                 .setContentIntent(pi).setAutoCancel(true).build());
     }
 
-
-    // ------------------------------------------------------------ loading screen
-    private android.view.View buildSplash() {
-        float d = getResources().getDisplayMetrics().density;
-        android.widget.LinearLayout l = new android.widget.LinearLayout(this);
-        l.setOrientation(android.widget.LinearLayout.VERTICAL);
-        l.setGravity(android.view.Gravity.CENTER);
-        l.setBackgroundColor(accent);
-        l.setClickable(true); // swallow touches while loading
-        android.widget.TextView av = new android.widget.TextView(this);
-        av.setText(account.substring(0, 1).toUpperCase());
-        av.setTextColor(accent);
-        av.setTextSize(40);
-        av.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        av.setGravity(android.view.Gravity.CENTER);
-        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
-        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        g.setColor(android.graphics.Color.WHITE);
-        av.setBackground(g);
-        l.addView(av, new android.widget.LinearLayout.LayoutParams((int) (96 * d), (int) (96 * d)));
-        android.widget.TextView n = new android.widget.TextView(this);
-        n.setText(account);
-        n.setGravity(android.view.Gravity.CENTER);
-        n.setTextColor(android.graphics.Color.WHITE);
-        n.setTextSize(22);
-        n.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        n.setPadding(0, (int) (16 * d), 0, (int) (4 * d));
-        l.addView(n);
-        android.widget.TextView s = new android.widget.TextView(this);
-        s.setText("Connecting to WhatsApp Web…");
-        s.setGravity(android.view.Gravity.CENTER);
-        s.setTextColor(0xCCFFFFFF);
-        s.setTextSize(14);
-        l.addView(s);
-        // gentle pulse so it feels alive
-        av.animate().scaleX(1.08f).scaleY(1.08f).setDuration(700).withEndAction(new Runnable() {
-            @Override public void run() {
-                if (splash == null) return;
-                float t = av.getScaleX() > 1.04f ? 1f : 1.08f;
-                av.animate().scaleX(t).scaleY(t).setDuration(700).withEndAction(this).start();
-            }
-        }).start();
-        return l;
-    }
-
-    private void hideSplash() {
-        final android.view.View s = splash;
-        if (s == null) return;
-        splash = null;
-        s.animate().alpha(0f).setDuration(300).withEndAction(() -> root.removeView(s)).start();
-    }
-
-    private static int darken(int c) {
-        float[] hsv = new float[3];
-        android.graphics.Color.colorToHSV(c, hsv);
-        hsv[2] *= 0.75f;
-        return android.graphics.Color.HSVToColor(hsv);
-    }
-
     // ------------------------------------------------------------ menu / lifecycle
     @Override public boolean onCreateOptionsMenu(Menu m) {
         m.add(0, 1, 0, "Reload");
-        m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
-        m.add(0, 6, 1, "Show chat list");
-        m.add(0, 10, 1, "Show right panel");
-        m.add(0, 7, 5, "Layout diagnostics");
-        m.add(0, 4, 2, "Text size +");
-        m.add(0, 5, 3, "Text size -");
-        m.add(0, 3, 4, "Log out & clear this account");
+        m.add(0, 2, 1, "Switch phone / desktop layout");
+        m.add(0, 3, 2, "Log out & clear this account");
         return true;
     }
 
@@ -351,40 +220,9 @@ public class ChatActivity extends Activity {
         switch (i.getItemId()) {
             case 1: web.reload(); return true;
             case 2:
-                mode = (mode + 1) % 3;
-                ui.edit().putInt("mode", mode).apply();
-                Toast.makeText(this, new String[]{"Phone layout", "Desktop layout", "Original layout"}[mode],
-                        Toast.LENGTH_SHORT).show();
+                wide = !wide;
                 applySettings();
                 web.reload();
-                invalidateOptionsMenu();
-                return true;
-            case 7:
-                web.evaluateJavascript("window.__mw?window.__mw.debug():'Phone-mode script is not running on this page'", r -> {
-                    String t;
-                    try { t = String.valueOf(new org.json.JSONTokener(r).nextValue()); } catch (Exception e) { t = r; }
-                    android.widget.TextView tv = new android.widget.TextView(this);
-                    tv.setText(t);
-                    tv.setTypeface(android.graphics.Typeface.MONOSPACE);
-                    tv.setTextSize(12);
-                    tv.setTextIsSelectable(true);
-                    tv.setPadding(40, 30, 40, 10);
-                    new AlertDialog.Builder(this).setTitle("Layout diagnostics").setView(tv)
-                            .setPositiveButton("Close", null).show();
-                });
-                return true;
-            case 10:
-                web.evaluateJavascript("window.__mw&&window.__mw.showRight()", null);
-                return true;
-            case 6:
-                web.evaluateJavascript("window.__mw&&window.__mw.back()", null);
-                return true;
-            case 4:
-            case 5:
-                textZoom = Math.max(70, Math.min(200, textZoom + (i.getItemId() == 4 ? 10 : -10)));
-                ui.edit().putInt("zoom", textZoom).apply();
-                web.getSettings().setTextZoom(textZoom);
-                Toast.makeText(this, "Text size " + textZoom + "%", Toast.LENGTH_SHORT).show();
                 return true;
             case 3:
                 new AlertDialog.Builder(this).setTitle("Clear " + account + "?")
@@ -401,39 +239,10 @@ public class ChatActivity extends Activity {
         return false;
     }
 
-    @Override public void onConfigurationChanged(android.content.res.Configuration cfg) {
-        super.onConfigurationChanged(cfg);
-        // Tell the page the window size changed so it switches between one-pane and two-pane layouts.
-        web.postDelayed(() -> web.evaluateJavascript("window.dispatchEvent(new Event('resize'))", null), 250);
-    }
-
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); web.saveState(out); }
 
     @Override public void onBackPressed() {
-        if (mode == 0) {   // in a conversation, Back returns to the chat list first
-            web.evaluateJavascript("(window.__mw&&window.__mw.back())===true", r -> {
-                if (!"true".equals(r)) goBackOrHide();
-            });
-        } else {
-            goBackOrHide();
-        }
-    }
-
-    private void goBackOrHide() {
         if (web.canGoBack()) web.goBack(); else moveTaskToBack(true);
-    }
-
-    /** Phone mode: reshapes WhatsApp Web's two-pane desktop layout into one pane at a time. */
-    private void injectPhoneLayout() {
-        if (mode != 0) return;
-        try {
-            if (mwScript == null) {
-                try (java.io.InputStream in = getAssets().open("mw.js")) {
-                    mwScript = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                }
-            }
-            web.evaluateJavascript(mwScript, null);
-        } catch (java.io.IOException ignored) { }
     }
 
     @Override protected void onPause() {
