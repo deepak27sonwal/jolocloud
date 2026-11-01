@@ -349,7 +349,7 @@ public class ChatActivity extends Activity {
     private void injectAttachFix() {
         try {
             if (attachScript == null) {
-                try (java.io.InputStream in = getAssets().open("attach.js")) {
+                try (java.io.InputStream in = getAssets().open("fixes.js")) {
                     attachScript = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 }
             }
