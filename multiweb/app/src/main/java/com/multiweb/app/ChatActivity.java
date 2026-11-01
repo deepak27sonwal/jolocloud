@@ -339,6 +339,7 @@ public class ChatActivity extends Activity {
         m.add(0, 1, 0, "Reload");
         m.add(0, 2, 1, "Layout: " + new String[]{"Phone", "Desktop (zoomed out)", "Original"}[mode] + " (tap to change)");
         m.add(0, 6, 1, "Show chat list");
+        m.add(0, 10, 1, "Show right panel");
         m.add(0, 7, 5, "Layout diagnostics");
         m.add(0, 4, 2, "Text size +");
         m.add(0, 5, 3, "Text size -");
@@ -371,6 +372,9 @@ public class ChatActivity extends Activity {
                     new AlertDialog.Builder(this).setTitle("Layout diagnostics").setView(tv)
                             .setPositiveButton("Close", null).show();
                 });
+                return true;
+            case 10:
+                web.evaluateJavascript("window.__mw&&window.__mw.showRight()", null);
                 return true;
             case 6:
                 web.evaluateJavascript("window.__mw&&window.__mw.back()", null);

@@ -42,6 +42,7 @@
   var kidW = new WeakMap();
   var row = null, kids0 = [], cur = { list: null, chat: null, others: [], hasChat: false };
   var applied = { view: '', list: null, chat: null, others: '' };
+  var introCount = 0, introHasHeader = false, forceRight = false, lastStripTap = '(none yet)';
   var forceList = false, lastChatOpen = false, lastMain = null, timer = null, backBtn = null, lastNotified = '';
 
   function attached(n) { return !!n && document.documentElement.contains(n); }
@@ -125,6 +126,7 @@
       e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink');
     });
     applied = { view: '', list: null, chat: null, others: '' };
+    introCount = 0; introHasHeader = false;
   }
 
   // The login screen ("Scan to log in" + QR code) must be left completely alone: it is not a chat layout.
@@ -166,6 +168,24 @@
     loginRoot = null; loginScale = 0;
   }
 
+  // The right-hand pane shows a placeholder until something is opened in it (a chat, but also a call, a status,
+  // a community or a channel). "Open" = it holds real content, not just the placeholder we saw at the start.
+  function paneCount() { return cur.chat ? cur.chat.getElementsByTagName('*').length : 0; }
+  function baseline(countOnly) {
+    if (!cur.chat) return;
+    introCount = paneCount();
+    if (!countOnly) introHasHeader = !!cur.chat.querySelector('header');
+  }
+  function rightHasHeaderLike() {
+    return !!(cur.chat && cur.chat.querySelector('header,video,canvas,[role="dialog"],[aria-modal="true"]'));
+  }
+  function rightLooksOpen() {
+    if (!cur.chat) return false;
+    if (cur.hasChat) return true;
+    if (!introHasHeader && rightHasHeaderLike()) return true;
+    return introCount > 0 && paneCount() > introCount + 40;
+  }
+
   function apply() {
     if (isLoginPage()) {
       if (applied.view || document.querySelector('[data-mw]')) { clearMarks(); document.documentElement.removeAttribute('data-mw-view'); }
@@ -183,7 +203,8 @@
       if (!detect()) { notify('none'); return; }
     }
     if (!roles()) { notify('none'); return; }
-    var chatOpen = cur.hasChat, main = document.getElementById('main');
+    if (!cur.hasChat && !introCount) baseline(false);
+    var chatOpen = forceRight || rightLooksOpen(), main = document.getElementById('main');
     if (chatOpen && !lastChatOpen) forceList = false;     // a chat was just opened
     lastChatOpen = chatOpen;
     var view = (chatOpen && !forceList) ? 'chat' : 'list';
@@ -337,7 +358,7 @@
       tgt.dispatchEvent(new KeyboardEvent(t, { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
     });
     setTimeout(function () {
-      if (snap() === before && document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; apply(); }
+      if (snap() === before && document.documentElement.getAttribute('data-mw-view') === 'chat') { forceList = true; forceRight = false; apply(); }
     }, 300);
     return true;
   }
@@ -354,6 +375,8 @@
                'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat + ', overlayOpen: ' + overlayOpen(),
                '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'), 'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    out.push('right pane: nodes ' + paneCount() + ' (placeholder had ' + introCount + (introHasHeader ? ', with header' : '') + '), looks open: ' + rightLooksOpen() + ', forced: ' + forceRight);
+    out.push('last side-icon tap: ' + lastStripTap);
     out.push('tap audit: checked ' + lastAudit.checked + ', blocked ' + lastAudit.blocked + ', repaired ' + lastAudit.fixed);
     lastAudit.notes.slice(0, 6).forEach(function (n) { out.push('  ' + n); });
     if (cur.chat) {
@@ -367,13 +390,33 @@
 
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   document.addEventListener('click', function (e) {
-    if (attached(cur.list) && cur.list.contains(e.target) && e.target.closest &&
-        e.target.closest('#pane-side,[role="listitem"],[role="row"],[data-testid="cell-frame-container"]')) {
-      forceList = false;
-      setTimeout(apply, 60);
+    var t = e.target;
+    // a tap on one of WhatsApp's side icons (Calls, Status, Channels, Communities...): see what it did
+    if (t.closest && t.closest('[data-mw=strip]')) {
+      var listSig = cur.list ? cur.list.innerText.length : 0, rc0 = paneCount();
+      forceRight = false;
+      setTimeout(function () {
+        var opened = !cur.hasChat && !introHasHeader && rightHasHeaderLike();
+        lastStripTap = 'list text ' + listSig + '->' + (cur.list ? cur.list.innerText.length : 0) + ', right nodes ' + rc0 + '->' + paneCount() +
+                       ', right has header/video: ' + rightHasHeaderLike() + (opened ? ' => opening right panel' : '');
+        if (!opened && !cur.hasChat) baseline(true);        // a different placeholder: remember its size
+        apply();
+      }, 600);
+      return;
+    }
+    // a tap on an item of the list: if it opened something in the right pane, show it
+    if (attached(cur.list) && cur.list.contains(t) && t.closest) {
+      var r = t.getBoundingClientRect ? t.getBoundingClientRect() : { top: 999 };
+      var inHeader = t.closest('header,[contenteditable="true"],input') || r.top < 150;
+      if (t.closest('#pane-side,[role="listitem"],[role="row"],[data-testid="cell-frame-container"]') || !inHeader) {
+        forceList = false;
+        setTimeout(apply, 60); setTimeout(apply, 450);
+      }
     }
   }, true);
 
-  window.__mw = { refresh: apply, back: back, debug: debug, fit: fit, audit: audit };
+  function showRight() { forceRight = true; forceList = false; apply(); return true; }
+
+  window.__mw = { refresh: apply, back: back, debug: debug, fit: fit, audit: audit, showRight: showRight };
   apply();
 })();
