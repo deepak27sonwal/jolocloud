@@ -16,6 +16,9 @@
     '[data-mw=row]{min-width:0!important;max-width:100vw!important;width:100%!important}' +
     '[data-mw=other]{display:none!important}' +
     '[data-mw=strip]{flex:0 0 auto!important}' +
+    '[data-mw=altlist]{display:block!important;flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
+    'html[data-mw-alt][data-mw-view=list] [data-mw=list]{display:none!important}' +
+    'html[data-mw-view=chat] [data-mw=altlist]{display:none!important}' +
     'html[data-mw-view=chat] [data-mw=strip]{display:none!important}' +
     '[data-mw=list]{flex:1 1 0!important;width:auto!important;min-width:0!important;max-width:none!important}' +
     '[data-mw=chat]{flex:1 1 100%!important;width:100%!important;min-width:0!important;max-width:100vw!important}' +
@@ -41,8 +44,9 @@
 
   var kidW = new WeakMap();
   var row = null, kids0 = [], cur = { list: null, chat: null, others: [], hasChat: false };
-  var applied = { view: '', list: null, chat: null, others: '' };
+  var applied = { view: '', list: null, chat: null, others: '', alt: null };
   var introCount = 0, introHasHeader = false, forceRight = false, lastStripTap = '(none yet)';
+  var kidCount0 = 0, blankWatchUntil = 0, autoRight = false, altKid = null;
   var forceList = false, lastChatOpen = false, lastMain = null, timer = null, backBtn = null, lastNotified = '';
 
   function attached(n) { return !!n && document.documentElement.contains(n); }
@@ -81,7 +85,12 @@
     // full-height children count even when squeezed to zero width (flex rows stretch every child to the row height)
     kids0 = kidsOf(row).filter(function (k) { return k.offsetHeight > 100; });
     kids0.forEach(function (k) { kidW.set(k, k.offsetWidth); });
+    kidCount0 = kidsOf(row).length;
     return kids0.length >= 2;
+  }
+
+  function isStrip(k) {
+    return (kidW.has(k) ? kidW.get(k) : k.offsetWidth) <= 120 && k.querySelectorAll('button,[role=button],[tabindex]').length >= 3;
   }
 
   function roles() {
@@ -95,11 +104,10 @@
         if (!chat && k !== list && k.querySelector && k.querySelector('footer,[contenteditable="true"],[data-testid="conversation-compose-box-input"]')) { chat = k; hasChat = true; }
       });
     }
-    if (!list) list = kids0.slice(0, -1).reduce(function (a, b) { return !a || area(a) >= area(b) ? b : a; }, null);
-    if (!chat) {
-      var after = kids.filter(function (k) { return k !== list && kids0.indexOf(k) >= 0; });
-      chat = after.length ? after[after.length - 1] : null;
-    }
+    // No #side (e.g. the Calls / Status / Communities panels): the list is the first pane that is not the icon strip,
+    // the conversation / page pane is the last one.
+    if (!list) { var cand = kids0.filter(function (k) { return !isStrip(k); }); list = cand.length ? cand[0] : null; }
+    if (!chat) { var rest = kids0.filter(function (k) { return k !== list && !isStrip(k); }); chat = rest.length ? rest[rest.length - 1] : null; }
     cur = { list: list, chat: chat, others: kids0.filter(function (k) { return k !== list && k !== chat; }), hasChat: hasChat };
     return !!(list && chat);
   }
@@ -125,7 +133,7 @@
       e.removeAttribute('data-mw'); e.removeAttribute('data-mw-anc'); e.removeAttribute('data-mw-fit');
       e.removeAttribute('data-mw-vis'); e.removeAttribute('data-mw-pass'); e.removeAttribute('data-mw-shrink');
     });
-    applied = { view: '', list: null, chat: null, others: '' };
+    applied = { view: '', list: null, chat: null, others: '', alt: null };
     introCount = 0; introHasHeader = false;
   }
 
@@ -170,6 +178,7 @@
 
   // The right-hand pane shows a placeholder until something is opened in it (a chat, but also a call, a status,
   // a community or a channel). "Open" = it holds real content, not just the placeholder we saw at the start.
+  function textLen(el) { return el ? ((el.innerText || el.textContent || '').trim().length) : 0; }
   function paneCount() { return cur.chat ? cur.chat.getElementsByTagName('*').length : 0; }
   function baseline(countOnly) {
     if (!cur.chat) return;
@@ -202,26 +211,42 @@
       clearMarks();
       if (!detect()) { notify('none'); return; }
     }
+    if (kidsOf(row).length !== kidCount0) {            // a panel was added or removed: look at the layout again
+      clearMarks();
+      if (!detect()) { notify('none'); return; }
+    }
     if (!roles()) { notify('none'); return; }
     if (!cur.hasChat && !introCount) baseline(false);
-    var chatOpen = forceRight || rightLooksOpen(), main = document.getElementById('main');
+    // Blank chat list right after a tap on a side icon: the page the icon opened may live in another pane. Find it.
+    if (textLen(cur.list) >= 15) { autoRight = false; altKid = null; }
+    else if (Date.now() < blankWatchUntil && !forceList) {
+      var best = null, bt = 14;
+      [cur.chat].concat(cur.others.filter(function (o) { return !isStrip(o); })).forEach(function (k) {
+        var t = textLen(k); if (t > bt) { bt = t; best = k; }
+      });
+      if (best === cur.chat) { autoRight = true; altKid = null; }
+      else if (best) { altKid = best; autoRight = false; }
+    }
+    var chatOpen = forceRight || autoRight || rightLooksOpen(), main = document.getElementById('main');
     if (chatOpen && !lastChatOpen) forceList = false;     // a chat was just opened
     lastChatOpen = chatOpen;
     var view = (chatOpen && !forceList) ? 'chat' : 'list';
     var othersSig = cur.others.length;
 
-    var changed = applied.view !== view || applied.list !== cur.list || applied.chat !== cur.chat || applied.others !== othersSig;
+    var changed = applied.view !== view || applied.list !== cur.list || applied.chat !== cur.chat || applied.others !== othersSig || applied.alt !== altKid;
     if (changed) {                                          // touch the DOM only when something really changed
       Array.prototype.forEach.call(document.querySelectorAll('[data-mw]'), function (e) { e.removeAttribute('data-mw'); });
       row.setAttribute('data-mw', 'row');
       cur.list.setAttribute('data-mw', 'list');
       cur.chat.setAttribute('data-mw', 'chat');
       cur.others.forEach(function (r) { r.setAttribute('data-mw', (kidW.get(r) || 0) <= 120 ? 'strip' : 'other'); });
+      if (altKid) altKid.setAttribute('data-mw', 'altlist');
+      if (altKid) document.documentElement.setAttribute('data-mw-alt', '1'); else document.documentElement.removeAttribute('data-mw-alt');
       [row, cur.chat].forEach(function (start) {
         for (var a = start.parentElement; a && a !== document.body; a = a.parentElement) a.setAttribute('data-mw-anc', '1');
       });
       document.documentElement.setAttribute('data-mw-view', view);
-      applied = { view: view, list: cur.list, chat: cur.chat, others: othersSig };
+      applied = { view: view, list: cur.list, chat: cur.chat, others: othersSig, alt: altKid };
     }
     ensureBackBtn().style.display = view === 'chat' ? 'flex' : 'none';
     notify(view);
@@ -375,6 +400,7 @@
                'view: ' + document.documentElement.getAttribute('data-mw-view') + ', chatOpen: ' + cur.hasChat + ', overlayOpen: ' + overlayOpen(),
                '#side: ' + !!document.getElementById('side') + ', #main: ' + !!document.getElementById('main'), 'row children:'];
     if (row) kidsOf(row).forEach(function (k) { out.push('  ' + describe(k)); });
+    out.push('panes (text length): list ' + textLen(cur.list) + ', right ' + textLen(cur.chat) + (cur.others.length ? ', others ' + cur.others.map(function (o) { return textLen(o); }).join('/') : '') + ', auto-right ' + autoRight + ', alt ' + (altKid ? describe(altKid) : 'none'));
     out.push('right pane: nodes ' + paneCount() + ' (placeholder had ' + introCount + (introHasHeader ? ', with header' : '') + '), looks open: ' + rightLooksOpen() + ', forced: ' + forceRight);
     out.push('last side-icon tap: ' + lastStripTap);
     out.push('tap audit: checked ' + lastAudit.checked + ', blocked ' + lastAudit.blocked + ', repaired ' + lastAudit.fixed);
@@ -394,7 +420,8 @@
     // a tap on one of WhatsApp's side icons (Calls, Status, Channels, Communities...): see what it did
     if (t.closest && t.closest('[data-mw=strip]')) {
       var listSig = cur.list ? cur.list.innerText.length : 0, rc0 = paneCount();
-      forceRight = false;
+      forceRight = false; autoRight = false; altKid = null; blankWatchUntil = Date.now() + 5000;
+      [700, 1600, 3200].forEach(function (ms) { setTimeout(apply, ms); });
       setTimeout(function () {
         var opened = !cur.hasChat && !introHasHeader && rightHasHeaderLike();
         lastStripTap = 'list text ' + listSig + '->' + (cur.list ? cur.list.innerText.length : 0) + ', right nodes ' + rc0 + '->' + paneCount() +
