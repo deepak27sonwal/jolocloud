@@ -13,6 +13,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
@@ -45,12 +46,14 @@ public class ChatActivity extends Activity {
     private static final String HOME = "https://web.whatsapp.com/";
     private static final String DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-    private static final int REQ_FILE = 1, REQ_PERM = 2;
+    private static final int REQ_FILE = 1, REQ_PERM = 2, REQ_MEDIA = 4;
 
     private WebView web;
     private ProgressBar bar;
     private ValueCallback<Uri[]> chooser;
     private PermissionRequest pendingPerm;
+    private Intent pendingPicker;          // file picker waiting for the media permission answer
+    private boolean mediaAsked = false;
     private String account;
     private int lastUnread = 0;
     private FrameLayout root;
@@ -85,6 +88,7 @@ public class ChatActivity extends Activity {
         setContentView(root);
 
         applySettings();
+        if (!hasMediaPermission() && !mediaAsked) { mediaAsked = true; requestPermissions(mediaPermissions(), REQ_MEDIA); }
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
         web.addJavascriptInterface(new Bridge(), "Android");
@@ -135,9 +139,20 @@ public class ChatActivity extends Activity {
         @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
             if (chooser != null) chooser.onReceiveValue(null);
             chooser = cb;
-            try { startActivityForResult(p.createIntent(), REQ_FILE); }
-            catch (ActivityNotFoundException e) { chooser = null; return false; }
-            return true;
+            Intent i;
+            try {
+                i = p.createIntent();
+            } catch (Exception e) {
+                i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            }
+            if (p.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            if (!hasMediaPermission() && !mediaAsked) {      // first attach without access: ask, then open the picker
+                mediaAsked = true;
+                pendingPicker = i;
+                requestPermissions(mediaPermissions(), REQ_MEDIA);
+                return true;
+            }
+            return launchPicker(i);
         }
 
         @Override public void onPermissionRequest(PermissionRequest r) {
@@ -159,7 +174,50 @@ public class ChatActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------------ media access (photos, videos, audio)
+    private static String[] mediaPermissions() {
+        if (Build.VERSION.SDK_INT >= 34) return new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED};
+        if (Build.VERSION.SDK_INT >= 33) return new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO};
+        return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
+    }
+
+    private boolean hasMediaPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+                    || (Build.VERSION.SDK_INT >= 34
+                        && checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED);
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean launchPicker(Intent i) {
+        try {
+            startActivityForResult(i, REQ_FILE);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            try {
+                startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT)
+                        .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_FILE);
+                return true;
+            } catch (ActivityNotFoundException e2) {
+                if (chooser != null) { chooser.onReceiveValue(null); chooser = null; }
+                Toast.makeText(this, "No file picker available", Toast.LENGTH_LONG).show();
+                return false;
+            }
+        }
+    }
+
     @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        if (code == REQ_MEDIA) {
+            // whatever the answer, the picker still opens (it also works with partial access)
+            Intent i = pendingPicker;
+            pendingPicker = null;
+            if (i != null && chooser != null) launchPicker(i);
+            return;
+        }
         if (code != REQ_PERM || pendingPerm == null) return;
         boolean ok = res.length > 0;
         for (int r : res) ok &= r == PackageManager.PERMISSION_GRANTED;
@@ -168,10 +226,14 @@ public class ChatActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int code, int result, Intent data) {
-        if (code == REQ_FILE && chooser != null) {
-            chooser.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
-            chooser = null;
+        if (code != REQ_FILE || chooser == null) return;
+        Uri[] files = null;
+        if (result == RESULT_OK && data != null) {
+            files = WebChromeClient.FileChooserParams.parseResult(result, data);
+            if (files == null && data.getData() != null) files = new Uri[]{data.getData()};
         }
+        chooser.onReceiveValue(files);
+        chooser = null;
     }
 
     // ------------------------------------------------------------ downloads (WhatsApp uses blob: URLs)
