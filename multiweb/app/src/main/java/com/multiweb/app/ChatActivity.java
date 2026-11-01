@@ -123,7 +123,7 @@ public class ChatActivity extends Activity {
             return true; // links to other sites open in the normal browser
         }
         @Override public void onPageStarted(WebView v, String u, Bitmap f) { bar.setVisibility(android.view.View.VISIBLE); }
-        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); }
+        @Override public void onPageFinished(WebView v, String u) { bar.setVisibility(android.view.View.GONE); hideSplash(); injectAttachFix(); }
     }
 
     private class Chrome extends WebChromeClient {
@@ -340,6 +340,21 @@ public class ChatActivity extends Activity {
         android.graphics.Color.colorToHSV(c, hsv);
         hsv[2] *= 0.75f;
         return android.graphics.Color.HSVToColor(hsv);
+    }
+
+    // ------------------------------------------------------------ attach menu placement
+    private String attachScript;
+
+    /** Keeps WhatsApp's attach menu inside the visible screen (right side, above the message bar). */
+    private void injectAttachFix() {
+        try {
+            if (attachScript == null) {
+                try (java.io.InputStream in = getAssets().open("attach.js")) {
+                    attachScript = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+            web.evaluateJavascript(attachScript, null);
+        } catch (java.io.IOException ignored) { }
     }
 
     // ------------------------------------------------------------ menu / lifecycle
