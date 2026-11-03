@@ -13,7 +13,9 @@ import android.os.Build;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.ContactsContract;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -74,6 +76,7 @@ final class BackupEngine {
             }
             if (st.photos() && !cancelled) backupMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "photos");
             if (st.videos() && !cancelled) backupMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "videos");
+            if (st.filesEnabled() && !cancelled) backupFilesAndFolders();
         } catch (Exception e) {
             Status.log("ERROR: " + e.getMessage());
             failed++;
@@ -215,6 +218,132 @@ final class BackupEngine {
 
     private static String clean(String s) {
         return s.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+    }
+
+    // ---------------------------------------------------------------- chosen files & folders
+    private void backupFilesAndFolders() {
+        for (String s : new HashSet<>(st.pickedTrees())) {
+            if (cancelled) return;
+            Uri tree = Uri.parse(s);
+            try {
+                String rootDocId = DocumentsContract.getTreeDocumentId(tree);
+                String rootName = clean(docDisplayName(tree, rootDocId, "Folder"));
+                Status.log("Scanning folder " + rootName + "…");
+                walkTree(tree, rootDocId, "files/" + rootName);
+            } catch (SecurityException e) {
+                failed++;
+                Status.log("Lost access to a folder — add it again in the app");
+            } catch (Exception e) {
+                failed++;
+                Status.log("Folder failed: " + e.getMessage());
+            }
+        }
+        for (String s : new HashSet<>(st.pickedFiles())) {
+            if (cancelled) return;
+            try {
+                backupSingleFile(Uri.parse(s));
+            } catch (Exception e) {
+                failed++;
+                Status.log("File failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private void walkTree(Uri treeUri, String parentDocId, String keyPrefix) {
+        if (cancelled) return;
+        Uri childrenUri;
+        try {
+            childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId);
+        } catch (Exception e) {
+            return;
+        }
+        try (Cursor c = cr.query(childrenUri, new String[]{
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
+            if (c == null) { Status.log("Could not list a folder (permission?)"); return; }
+            while (c.moveToNext() && !cancelled) {
+                String docId = c.getString(0);
+                String name = c.getString(1) == null ? "unnamed" : c.getString(1);
+                String mime = c.getString(2);
+                long size = c.isNull(3) ? 0 : c.getLong(3);
+                long mod = c.isNull(4) ? 0 : c.getLong(4);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    walkTree(treeUri, docId, keyPrefix + "/" + clean(name));
+                    continue;
+                }
+                String ident = "tree:" + treeUri + ":" + docId + ":" + size + ":" + mod;
+                if (done.contains(ident)) continue;
+                Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+                String key = keyPrefix + "/" + clean(name);
+                try (ParcelFileDescriptor pfd = cr.openFileDescriptor(fileUri, "r");
+                     InputStream in = new FileInputStream(pfd.getFileDescriptor())) {
+                    Status.summary = "Uploading " + name;
+                    s3.put(key, in, pfd.getStatSize(), mime == null ? "application/octet-stream" : mime);
+                    bytesSent += pfd.getStatSize();
+                    bytesOriginal += pfd.getStatSize();
+                    markDone(ident);
+                    uploaded++;
+                } catch (Exception e) {
+                    failed++;
+                    Status.log("Failed " + name + ": " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            Status.log("Could not list a folder: " + e.getMessage());
+        }
+    }
+
+    private void backupSingleFile(Uri uri) {
+        String name = "file";
+        long size = 0, mod = 0;
+        try (Cursor c = cr.query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int si = c.getColumnIndex(OpenableColumns.SIZE);
+                int li = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED);
+                if (ni >= 0 && !c.isNull(ni)) name = c.getString(ni);
+                if (si >= 0 && !c.isNull(si)) size = c.getLong(si);
+                if (li >= 0 && !c.isNull(li)) mod = c.getLong(li);
+            }
+        } catch (Exception ignored) { }
+        String ident = "file:" + uri + ":" + size + ":" + mod;
+        if (done.contains(ident)) return;
+        String mime = cr.getType(uri);
+        String key = "files/" + shortId(uri.toString()) + "_" + clean(name);
+        try (ParcelFileDescriptor pfd = cr.openFileDescriptor(uri, "r");
+             InputStream in = new FileInputStream(pfd.getFileDescriptor())) {
+            Status.summary = "Uploading " + name;
+            s3.put(key, in, pfd.getStatSize(), mime == null ? "application/octet-stream" : mime);
+            bytesSent += pfd.getStatSize();
+            bytesOriginal += pfd.getStatSize();
+            markDone(ident);
+            uploaded++;
+        } catch (SecurityException e) {
+            failed++;
+            Status.log("Lost access to " + name + " — add it again in the app");
+        } catch (Exception e) {
+            failed++;
+            Status.log("Failed " + name + ": " + e.getMessage());
+        }
+    }
+
+    private String docDisplayName(Uri treeUri, String docId, String fallback) {
+        try (Cursor c = cr.query(DocumentsContract.buildDocumentUriUsingTree(treeUri, docId),
+                new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0) && !c.getString(0).isEmpty()) return c.getString(0);
+        } catch (Exception ignored) { }
+        return fallback;
+    }
+
+    /** Short, stable id derived from a content URI, used so same-named files from different folders don't collide. */
+    private static String shortId(String s) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            return hex(d).substring(0, 8);
+        } catch (Exception e) {
+            return Integer.toHexString(s.hashCode());
+        }
     }
 
     // ---------------------------------------------------------------- contacts

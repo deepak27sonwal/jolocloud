@@ -4,10 +4,14 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.View;
 import android.widget.Button;
@@ -24,10 +28,12 @@ import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
+    private static final int REQ_PICK_FOLDER = 10, REQ_PICK_FILES = 11;
     private EditText url, anon, email, password;
-    private CheckBox photos, videos, contacts, auto, compress, messages;
+    private CheckBox photos, videos, contacts, auto, compress, messages, files;
     private TextView summary, log, listenerState;
-    private Button pinButton, removePinButton, timeButton;
+    private Button pinButton, removePinButton, timeButton, addFolderBtn, addFilesBtn;
+    private LinearLayout filesListContainer;
     private Switch serviceSwitch;
     private View[] gatedByService;
     private Settings st;
@@ -112,7 +118,22 @@ public class MainActivity extends Activity {
         timeButton = button(root, "Backup time: " + timeLabel());
         timeButton.setOnClickListener(v -> pickTime());
 
-        gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton};
+        label(root, "Files & folders");
+        files = check(root, "Back up the files and folders chosen below", st.filesEnabled());
+        addFolderBtn = button(root, "Add a folder to back up");
+        addFolderBtn.setOnClickListener(v -> startActivityForResult(
+                new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_PICK_FOLDER));
+        addFilesBtn = button(root, "Add individual files");
+        addFilesBtn.setOnClickListener(v -> startActivityForResult(
+                new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), REQ_PICK_FILES));
+        filesListContainer = new LinearLayout(this);
+        filesListContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(filesListContainer);
+        renderFilesList();
+
+        gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton,
+                files, addFolderBtn, addFilesBtn};
         setGatedEnabled(st.serviceEnabled());
         serviceSwitch.setOnCheckedChangeListener((v, on) -> {
             st.p.edit().putBoolean("serviceEnabled", on).apply();
@@ -201,6 +222,7 @@ public class MainActivity extends Activity {
                 .putBoolean("contacts", contacts.isChecked())
                 .putBoolean("messages", messages.isChecked())
                 .putBoolean("auto", auto.isChecked())
+                .putBoolean("filesEnabled", files.isChecked())
                 .apply();
         BackupJobService.schedule(this, auto.isChecked());
         if (messages.isChecked()) OutboxJobService.schedule(this); else OutboxJobService.cancel(this);
@@ -248,6 +270,108 @@ public class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
         launch(); // run with whatever was granted; the engine reports anything unreadable
+    }
+
+    // ---- files & folders (Storage Access Framework)
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+        if (requestCode == REQ_PICK_FOLDER) {
+            Uri tree = data.getData();
+            if (tree == null) return;
+            takePersisted(tree);
+            st.addPickedTree(tree.toString());
+            renderFilesList();
+            files.setChecked(true);
+            save();
+        } else if (requestCode == REQ_PICK_FILES) {
+            List<Uri> picked = new ArrayList<>();
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) picked.add(data.getClipData().getItemAt(i).getUri());
+            } else if (data.getData() != null) {
+                picked.add(data.getData());
+            }
+            for (Uri u : picked) {
+                takePersisted(u);
+                st.addPickedFile(u.toString());
+            }
+            if (!picked.isEmpty()) {
+                renderFilesList();
+                files.setChecked(true);
+                save();
+            }
+        }
+    }
+
+    private void takePersisted(Uri uri) {
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException ignored) { } // some providers (e.g. plain file pickers) do not support this; we still try to read it later
+    }
+
+    private void renderFilesList() {
+        filesListContainer.removeAllViews();
+        for (String s : st.pickedTrees()) addPickedRow("📁 " + treeName(Uri.parse(s)), () -> {
+            st.removePickedTree(s);
+            try { getContentResolver().releasePersistableUriPermission(Uri.parse(s), Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+            renderFilesList();
+        });
+        for (String s : st.pickedFiles()) addPickedRow(fileName(Uri.parse(s)), () -> {
+            st.removePickedFile(s);
+            try { getContentResolver().releasePersistableUriPermission(Uri.parse(s), Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+            renderFilesList();
+        });
+        if (st.pickedTrees().isEmpty() && st.pickedFiles().isEmpty()) {
+            TextView none = new TextView(this);
+            none.setTextSize(12);
+            none.setText("Nothing chosen yet.");
+            filesListContainer.addView(none);
+        }
+    }
+
+    private interface Removal { void run(); }
+
+    private void addPickedRow(String label, Removal onRemove) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView t = new TextView(this);
+        t.setText(label);
+        t.setTextSize(13);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        t.setSingleLine();
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        lp.gravity = android.view.Gravity.CENTER_VERTICAL;
+        row.addView(t, lp);
+        Button remove = new Button(this);
+        remove.setText("Remove");
+        remove.setOnClickListener(v -> onRemove.run());
+        row.addView(remove);
+        filesListContainer.addView(row);
+    }
+
+    private String treeName(Uri treeUri) {
+        try {
+            String docId = DocumentsContract.getTreeDocumentId(treeUri);
+            Uri docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+            try (Cursor c = getContentResolver().query(docUri,
+                    new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst()) {
+                    String n = c.getString(0);
+                    if (n != null && !n.isEmpty()) return n;
+                }
+            }
+        } catch (Exception ignored) { }
+        return treeUri.getLastPathSegment() != null ? treeUri.getLastPathSegment() : "folder";
+    }
+
+    private String fileName(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                String n = c.getString(0);
+                if (n != null && !n.isEmpty()) return n;
+            }
+        } catch (Exception ignored) { }
+        return uri.getLastPathSegment() != null ? uri.getLastPathSegment() : "file";
     }
 
     private void launch() {

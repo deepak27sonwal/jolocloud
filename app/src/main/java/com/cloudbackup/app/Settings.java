@@ -31,6 +31,28 @@ final class Settings {
     int backupHour()   { return p.getInt("backupHour", 2); }
     int backupMinute() { return p.getInt("backupMinute", 0); }
 
+    // ---- chosen files / folders to back up (content:// URIs with a persisted read grant)
+    boolean filesEnabled() { return p.getBoolean("filesEnabled", false); }
+    java.util.Set<String> pickedTrees() { return p.getStringSet("pickedTrees", java.util.Collections.emptySet()); }
+    java.util.Set<String> pickedFiles() { return p.getStringSet("pickedFiles", java.util.Collections.emptySet()); }
+
+    void addPickedTree(String uri) { addTo("pickedTrees", uri); }
+    void addPickedFile(String uri) { addTo("pickedFiles", uri); }
+    void removePickedTree(String uri) { removeFrom("pickedTrees", uri); }
+    void removePickedFile(String uri) { removeFrom("pickedFiles", uri); }
+
+    private void addTo(String key, String val) {
+        java.util.Set<String> s = new java.util.HashSet<>(p.getStringSet(key, java.util.Collections.emptySet()));
+        s.add(val);
+        p.edit().putStringSet(key, s).apply();
+    }
+
+    private void removeFrom(String key, String val) {
+        java.util.Set<String> s = new java.util.HashSet<>(p.getStringSet(key, java.util.Collections.emptySet()));
+        s.remove(val);
+        p.edit().putStringSet(key, s).apply();
+    }
+
     // ---- app PIN lock
     String pinHash()   { return p.getString("pinHash", ""); }
     String pinSalt()   { return p.getString("pinSalt", ""); }
