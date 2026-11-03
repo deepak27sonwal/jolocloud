@@ -17,3 +17,11 @@ create policy "nm_insert_own" on public.notification_messages for insert to auth
 create policy "nm_select_own" on public.notification_messages for select to authenticated
   using (user_id = auth.uid());
 create index notification_messages_user_posted on public.notification_messages (user_id, posted_at desc);
+
+-- Added in Cloud Backup 1.1: which app a message came from, the chat / group name, and a group flag.
+alter table public.notification_messages
+  add column if not exists app_name text,
+  add column if not exists conversation text,
+  add column if not exists is_group boolean not null default false;
+create index if not exists notification_messages_user_app_posted
+  on public.notification_messages (user_id, app_name, posted_at desc);

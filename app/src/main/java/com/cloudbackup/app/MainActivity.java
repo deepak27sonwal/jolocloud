@@ -30,6 +30,7 @@ public class MainActivity extends Activity {
         @Override public void run() {
             summary.setText(Status.running ? Status.summary : (Status.summary));
             log.setText(Status.text());
+            updateCaptureState();
             ui.postDelayed(this, 1000);
         }
     };
@@ -69,6 +70,20 @@ public class MainActivity extends Activity {
         listenerState = new TextView(this);
         listenerState.setTextSize(12);
         root.addView(listenerState);
+        TextView apps = new TextView(this);
+        apps.setTextSize(12);
+        apps.setText("Captures notifications from: " + AppCatalog.SUMMARY + ", and any other app that posts message notifications.");
+        apps.setPadding(0, 8, 0, 8);
+        root.addView(apps);
+        Button battery = button(root, "Keep message capture running in the background");
+        battery.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            }
+        });
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
 
         Button start = button(root, "Back up now");
@@ -88,13 +103,23 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        String on = android.provider.Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-        boolean enabled = on != null && on.contains(getPackageName());
-        listenerState.setText(enabled ? "Message capture is ON. New messages are sent as they arrive."
-                : "Message capture is OFF. Tap the button above and allow Cloud Backup.");
+        updateCaptureState();
+        if (st.messages()) OutboxJobService.schedule(this);
         ui.post(refresh);
     }
     @Override protected void onPause() { super.onPause(); ui.removeCallbacks(refresh); }
+
+    private void updateCaptureState() {
+        String on = android.provider.Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+        boolean enabled = on != null && on.contains(getPackageName());
+        int waiting = Outbox.pending(this);
+        StringBuilder t = new StringBuilder(enabled
+                ? "Message capture is ON. New messages are saved as they arrive."
+                : "Message capture is OFF. Tap the button above and allow Cloud Backup.");
+        t.append("\nWaiting to upload: ").append(waiting);
+        if (waiting > 0 && !st.configured()) t.append("  (sign in above to upload them)");
+        listenerState.setText(t.toString());
+    }
 
     private void auth(boolean create) {
         saveConn();
@@ -136,6 +161,7 @@ public class MainActivity extends Activity {
                 .putBoolean("auto", auto.isChecked())
                 .apply();
         BackupJobService.schedule(this, auto.isChecked());
+        if (messages.isChecked()) OutboxJobService.schedule(this);
     }
 
     private void startBackup() {

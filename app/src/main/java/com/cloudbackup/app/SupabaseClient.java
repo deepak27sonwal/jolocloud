@@ -102,6 +102,16 @@ final class SupabaseClient {
 
     /** Inserts rows into a table through PostgREST; duplicates (same user_id+dedupe_key) are ignored. */
     void insertRows(String table, String jsonArray) throws IOException {
+        try {
+            postRows(table, jsonArray);
+        } catch (IOException e) {
+            if (!String.valueOf(e.getMessage()).startsWith("HTTP 401")) throw e;
+            st.p.edit().putLong("exp", 0).apply();           // token expired / revoked: refresh it once and retry
+            postRows(table, jsonArray);
+        }
+    }
+
+    private void postRows(String table, String jsonArray) throws IOException {
         ensureSession();
         HttpURLConnection c = (HttpURLConnection) new URL(
                 base + "/rest/v1/" + table + "?on_conflict=user_id,dedupe_key").openConnection();
