@@ -24,6 +24,13 @@ final class Settings {
     boolean compress() { return p.getBoolean("compress", true); }
     boolean auto()     { return p.getBoolean("auto", false); }
 
+    // ---- master on/off switch for everything that runs in the background (auto backup + message capture)
+    boolean serviceEnabled() { return p.getBoolean("serviceEnabled", true); }
+
+    // ---- time of day the automatic backup runs (24h, device local time)
+    int backupHour()   { return p.getInt("backupHour", 2); }
+    int backupMinute() { return p.getInt("backupMinute", 0); }
+
     // ---- app PIN lock
     String pinHash()   { return p.getString("pinHash", ""); }
     String pinSalt()   { return p.getString("pinSalt", ""); }

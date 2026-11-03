@@ -15,16 +15,21 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.TimePicker;
 import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private EditText url, anon, email, password;
     private CheckBox photos, videos, contacts, auto, compress, messages;
     private TextView summary, log, listenerState;
-    private Button pinButton, removePinButton;
+    private Button pinButton, removePinButton, timeButton;
+    private Switch serviceSwitch;
+    private View[] gatedByService;
     private Settings st;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -46,6 +51,24 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
         setContentView(sv);
+
+        LinearLayout serviceRow = new LinearLayout(this);
+        serviceRow.setOrientation(LinearLayout.HORIZONTAL);
+        TextView serviceLabel = new TextView(this);
+        serviceLabel.setText("Backup service");
+        serviceLabel.setTextSize(16);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        lp.gravity = android.view.Gravity.CENTER_VERTICAL;
+        serviceRow.addView(serviceLabel, lp);
+        serviceSwitch = new Switch(this);
+        serviceSwitch.setChecked(st.serviceEnabled());
+        serviceRow.addView(serviceSwitch);
+        root.addView(serviceRow);
+        TextView serviceHint = new TextView(this);
+        serviceHint.setTextSize(12);
+        serviceHint.setText("Turns automatic backup and message capture on or off. \"Back up now\" still works while this is off.");
+        serviceHint.setPadding(0, 0, 0, 8);
+        root.addView(serviceHint);
 
         label(root, "Supabase project");
         url = field(root, "Project URL, e.g. https://xxxx.supabase.co", st.url(), false);
@@ -86,6 +109,17 @@ public class MainActivity extends Activity {
             }
         });
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
+        timeButton = button(root, "Backup time: " + timeLabel());
+        timeButton.setOnClickListener(v -> pickTime());
+
+        gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton};
+        setGatedEnabled(st.serviceEnabled());
+        serviceSwitch.setOnCheckedChangeListener((v, on) -> {
+            st.p.edit().putBoolean("serviceEnabled", on).apply();
+            setGatedEnabled(on);
+            save();
+            Toast.makeText(this, on ? "Backup service is ON" : "Backup service is OFF", Toast.LENGTH_SHORT).show();
+        });
 
         label(root, "App lock");
         pinButton = button(root, st.pinSet() ? "Change PIN" : "Set a PIN to open this app");
@@ -112,7 +146,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         updateCaptureState();
-        if (st.messages()) OutboxJobService.schedule(this);
+        if (st.messages() && st.serviceEnabled()) OutboxJobService.schedule(this);
         ui.post(refresh);
     }
     @Override protected void onPause() { super.onPause(); ui.removeCallbacks(refresh); }
@@ -169,7 +203,23 @@ public class MainActivity extends Activity {
                 .putBoolean("auto", auto.isChecked())
                 .apply();
         BackupJobService.schedule(this, auto.isChecked());
-        if (messages.isChecked()) OutboxJobService.schedule(this);
+        if (messages.isChecked()) OutboxJobService.schedule(this); else OutboxJobService.cancel(this);
+    }
+
+    private void setGatedEnabled(boolean on) {
+        for (View v : gatedByService) v.setEnabled(on);
+    }
+
+    private String timeLabel() {
+        return String.format(Locale.US, "%02d:%02d", st.backupHour(), st.backupMinute());
+    }
+
+    private void pickTime() {
+        new android.app.TimePickerDialog(this, (TimePicker tp, int hour, int minute) -> {
+            st.p.edit().putInt("backupHour", hour).putInt("backupMinute", minute).apply();
+            timeButton.setText("Backup time: " + timeLabel());
+            if (auto.isChecked() && serviceSwitch.isChecked()) BackupJobService.schedule(this, true);
+        }, st.backupHour(), st.backupMinute(), true).show();
     }
 
     private void startBackup() {

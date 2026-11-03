@@ -72,7 +72,8 @@ public class MessageListener extends NotificationListenerService {
     /** @return number of messages queued */
     private int handle(StatusBarNotification sbn) {
         try {
-            if (!new Settings(this).messages()) return 0;
+            Settings mst = new Settings(this);
+            if (!mst.serviceEnabled() || !mst.messages()) return 0;
             String pkg = sbn.getPackageName();
             Notification n = sbn.getNotification();
             if (n == null || pkg.equals(getPackageName())) return 0;

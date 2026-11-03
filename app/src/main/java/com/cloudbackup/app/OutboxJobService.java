@@ -13,6 +13,7 @@ public class OutboxJobService extends JobService {
 
     static void schedule(Context c) {
         JobScheduler js = c.getSystemService(JobScheduler.class);
+        if (!new Settings(c).serviceEnabled()) { js.cancel(JOB_ID); return; }
         for (JobInfo j : js.getAllPendingJobs()) if (j.getId() == JOB_ID) return;     // already scheduled
         js.schedule(new JobInfo.Builder(JOB_ID, new ComponentName(c, OutboxJobService.class))
                 .setPeriodic(15L * 60 * 1000)
@@ -21,7 +22,10 @@ public class OutboxJobService extends JobService {
                 .build());
     }
 
+    static void cancel(Context c) { c.getSystemService(JobScheduler.class).cancel(JOB_ID); }
+
     @Override public boolean onStartJob(JobParameters params) {
+        if (!new Settings(this).serviceEnabled()) return false;
         new Thread(() -> {
             boolean retry = false;
             try { Outbox.flush(this); } catch (Exception e) { retry = true; }
