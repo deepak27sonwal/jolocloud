@@ -35,7 +35,8 @@ public class MessageListener extends NotificationListenerService {
         @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 400; }
     };
     private static final Pattern PLACEHOLDER = Pattern.compile(
-            "^(\\d+\\s+(new\\s+)?(messages?|chats?|notifications?)(\\s+from\\s+\\d+\\s+chats?)?|checking for new messages\\.*|"
+            "^(\\d+\\s+(new\\s+)?(messages?|chats?|notifications?|emails?|conversations?)(\\s+from\\s+\\d+\\s+(chats?|conversations?))?|"
+            + "checking for new (messages|mail)\\.*|you have new mail|no new mail|new mail|"
             + "waiting for network|connecting\\.*|running in the background|backup in progress.*)$", Pattern.CASE_INSENSITIVE);
 
     private static final class Msg {

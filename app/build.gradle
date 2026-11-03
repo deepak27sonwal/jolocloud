@@ -7,8 +7,8 @@ android {
         applicationId 'com.cloudbackup.app'
         minSdk 26
         targetSdk 34
-        versionCode 6
-        versionName '1.5'
+        versionCode 7
+        versionName '1.6'
     }
     signingConfigs {
         debug { enableV1Signing = true; enableV2Signing = true; enableV3Signing = true }
