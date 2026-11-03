@@ -24,5 +24,10 @@ final class Settings {
     boolean compress() { return p.getBoolean("compress", true); }
     boolean auto()     { return p.getBoolean("auto", false); }
 
+    // ---- app PIN lock
+    String pinHash()   { return p.getString("pinHash", ""); }
+    String pinSalt()   { return p.getString("pinSalt", ""); }
+    boolean pinSet()   { return !pinHash().isEmpty(); }
+
     boolean configured() { return !url().isEmpty() && !anonKey().isEmpty() && !refresh().isEmpty(); }
 }

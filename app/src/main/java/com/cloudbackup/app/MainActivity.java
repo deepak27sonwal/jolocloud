@@ -24,6 +24,7 @@ public class MainActivity extends Activity {
     private EditText url, anon, email, password;
     private CheckBox photos, videos, contacts, auto, compress, messages;
     private TextView summary, log, listenerState;
+    private Button pinButton, removePinButton;
     private Settings st;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -85,6 +86,13 @@ public class MainActivity extends Activity {
             }
         });
         auto = check(root, "Automatic daily backup (Wi-Fi + charging)", st.auto());
+
+        label(root, "App lock");
+        pinButton = button(root, st.pinSet() ? "Change PIN" : "Set a PIN to open this app");
+        pinButton.setOnClickListener(v -> promptSetPin());
+        removePinButton = button(root, "Remove PIN");
+        removePinButton.setVisibility(st.pinSet() ? View.VISIBLE : View.GONE);
+        removePinButton.setOnClickListener(v -> promptRemovePin());
 
         Button start = button(root, "Back up now");
         start.setOnClickListener(v -> startBackup());
@@ -230,5 +238,73 @@ public class MainActivity extends Activity {
         b.setText(t);
         p.addView(b);
         return b;
+    }
+
+    // ---- app PIN lock
+    private void promptSetPin() {
+        if (st.pinSet()) {
+            EditText current = pinField("Current PIN");
+            new android.app.AlertDialog.Builder(this).setTitle("Enter current PIN").setView(current)
+                    .setPositiveButton("Next", (d, w) -> {
+                        if (PinUtil.matches(current.getText().toString(), st.pinSalt(), st.pinHash())) {
+                            promptNewPin();
+                        } else {
+                            Toast.makeText(this, "Wrong PIN", Toast.LENGTH_SHORT).show();
+                        }
+                    }).setNegativeButton("Cancel", null).show();
+        } else {
+            promptNewPin();
+        }
+    }
+
+    private void promptNewPin() {
+        EditText pin1 = pinField("New PIN (4+ digits)");
+        new android.app.AlertDialog.Builder(this).setTitle("Set a PIN").setView(pin1)
+                .setPositiveButton("Next", (d, w) -> {
+                    String p1 = pin1.getText().toString();
+                    if (p1.length() < 4) {
+                        Toast.makeText(this, "PIN must be at least 4 digits", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    EditText pin2 = pinField("Confirm PIN");
+                    new android.app.AlertDialog.Builder(this).setTitle("Confirm PIN").setView(pin2)
+                            .setPositiveButton("Set PIN", (d2, w2) -> {
+                                if (!p1.equals(pin2.getText().toString())) {
+                                    Toast.makeText(this, "PINs did not match", Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+                                String salt = PinUtil.newSalt();
+                                st.p.edit().putString("pinSalt", salt).putString("pinHash", PinUtil.hash(p1, salt)).apply();
+                                LockState.setUnlocked(true); // avoid immediately re-locking yourself out this run
+                                pinButton.setText("Change PIN");
+                                removePinButton.setVisibility(View.VISIBLE);
+                                Toast.makeText(this, "PIN set", Toast.LENGTH_SHORT).show();
+                            }).setNegativeButton("Cancel", null).show();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void promptRemovePin() {
+        if (!st.pinSet()) return;
+        EditText current = pinField("Current PIN");
+        new android.app.AlertDialog.Builder(this).setTitle("Remove PIN").setView(current)
+                .setPositiveButton("Remove", (d, w) -> {
+                    if (PinUtil.matches(current.getText().toString(), st.pinSalt(), st.pinHash())) {
+                        st.p.edit().remove("pinSalt").remove("pinHash").apply();
+                        pinButton.setText("Set a PIN to open this app");
+                        removePinButton.setVisibility(View.GONE);
+                        Toast.makeText(this, "PIN removed", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "Wrong PIN", Toast.LENGTH_SHORT).show();
+                    }
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private EditText pinField(String hint) {
+        EditText e = new EditText(this);
+        e.setHint(hint);
+        e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        e.setPadding(pad, pad, pad, pad);
+        return e;
     }
 }
