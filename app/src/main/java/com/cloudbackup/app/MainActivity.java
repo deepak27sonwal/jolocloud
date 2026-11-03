@@ -268,6 +268,23 @@ public class MainActivity extends Activity {
                 new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                         .setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), REQ_PICK_FILES));
         filesCard.addView(filesBtnRow);
+
+        LinearLayout waRow = new LinearLayout(this);
+        waRow.setOrientation(LinearLayout.HORIZONTAL);
+        waRow.setPadding(dp(30), 0, 0, dp(8));
+        Button waBtn = outlineButton(waRow, "📷 WhatsApp photos");
+        waBtn.setOnClickListener(v -> pickAppMediaFolder("com.whatsapp", "WhatsApp", "WhatsApp Images"));
+        ((LinearLayout.LayoutParams) waBtn.getLayoutParams()).setMargins(0, 0, dp(8), 0);
+        Button waBizBtn = outlineButton(waRow, "WhatsApp Business photos");
+        waBizBtn.setOnClickListener(v -> pickAppMediaFolder("com.whatsapp.w4b", "WhatsApp Business", "WhatsApp Business Images"));
+        filesCard.addView(waRow);
+        TextView waHint = text("Covers both sent and received photos — WhatsApp keeps them in one folder. "
+                + "Tap “Use this folder” / “Allow” on the screen that opens; if it doesn’t land in the "
+                + "right place, browse to Internal storage → Android → media → com.whatsapp → WhatsApp → "
+                + "Media → WhatsApp Images.", 11, getColor(R.color.subtext), false);
+        waHint.setPadding(dp(30), 0, 0, dp(10));
+        filesCard.addView(waHint);
+
         filesListContainer = new LinearLayout(this);
         filesListContainer.setOrientation(LinearLayout.VERTICAL);
         filesListContainer.setPadding(dp(30), 0, 0, 0);
@@ -276,7 +293,7 @@ public class MainActivity extends Activity {
         addCard(body, filesCard);
 
         gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton,
-                files, addFolderBtn, addFilesBtn};
+                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn};
         setGatedEnabled(st.serviceEnabled());
         serviceSwitch.setOnCheckedChangeListener((v, on) -> {
             st.p.edit().putBoolean("serviceEnabled", on).apply();
@@ -447,6 +464,22 @@ public class MainActivity extends Activity {
                 save();
             }
         }
+    }
+
+    /**
+     * Opens the folder picker pre-navigated (best-effort) to another app's media folder under
+     * Android/media/&lt;pkg&gt;, so adding it to "Files & folders" normally needs only one tap
+     * ("Use this folder"). The hint is ignored harmlessly on pickers that don't support it — the
+     * user then just browses there manually, same as the plain "Add folder" button.
+     */
+    private void pickAppMediaFolder(String pkg, String appFolderName, String mediaSubfolder) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        try {
+            String docId = "primary:Android/media/" + pkg + "/" + appFolderName + "/Media/" + mediaSubfolder;
+            Uri hint = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", docId);
+            i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, hint);
+        } catch (Exception ignored) { } // no hint: the picker just opens at its usual starting point
+        startActivityForResult(i, REQ_PICK_FOLDER);
     }
 
     private void takePersisted(Uri uri) {
