@@ -16,18 +16,20 @@
     <application
         android:name=".App"
         android:label="Cloud Backup"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+        android:theme="@style/AppTheme">
 
-        <activity android:name=".LockActivity" android:exported="true">
+        <activity android:name=".LockActivity" android:exported="true" android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".MainActivity" android:exported="false" android:theme="@style/AppTheme" />
 
         <service android:name=".BackupService"
             android:exported="false"

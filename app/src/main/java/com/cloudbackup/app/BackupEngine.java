@@ -83,6 +83,8 @@ final class BackupEngine {
         } finally {
             Status.running = false;
         }
+        st.addUploaded(uploaded);
+        st.setLastBackupAt(System.currentTimeMillis());
         String r = (cancelled ? "Stopped. " : "Done. ") + uploaded + " uploaded, " + failed + " failed."
                 + (bytesOriginal > 0 ? String.format(Locale.US, " Sent %.1f MB instead of %.1f MB.", bytesSent / 1e6, bytesOriginal / 1e6) : "");
         Status.summary = r;

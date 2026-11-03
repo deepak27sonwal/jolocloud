@@ -59,4 +59,10 @@ final class Settings {
     boolean pinSet()   { return !pinHash().isEmpty(); }
 
     boolean configured() { return !url().isEmpty() && !anonKey().isEmpty() && !refresh().isEmpty(); }
+
+    // ---- lifetime stats shown on the dashboard
+    long totalUploaded() { return p.getLong("totalUploaded", 0); }
+    void addUploaded(int n) { if (n > 0) p.edit().putLong("totalUploaded", totalUploaded() + n).apply(); }
+    long lastBackupAt() { return p.getLong("lastBackupAt", 0); }
+    void setLastBackupAt(long t) { p.edit().putLong("lastBackupAt", t).apply(); }
 }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#4C8DF0</color>
+    <color name="primary_dark">#0B3D8F</color>
+    <color name="accent">#26C6DA</color>
+    <color name="bg">#0E1621</color>
+    <color name="surface">#16202C</color>
+    <color name="stroke">#2A3744</color>
+    <color name="text">#E6EAF0</color>
+    <color name="subtext">#93A0AF</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="ok">#66BB6A</color>
+    <color name="warn">#EF5350</color>
+    <color name="off">#5D6B7A</color>
+    <color name="chip_bg">#17283D</color>
+</resources>
