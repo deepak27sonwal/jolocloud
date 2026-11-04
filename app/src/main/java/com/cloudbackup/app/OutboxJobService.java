@@ -29,6 +29,7 @@ public class OutboxJobService extends JobService {
         new Thread(() -> {
             boolean retry = false;
             try { Outbox.flush(this); } catch (Exception e) { retry = true; }
+            try { MediaOutbox.flush(this); } catch (Exception e) { retry = true; }
             jobFinished(params, retry);
         }, "outbox-job").start();
         return true;

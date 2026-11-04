@@ -92,6 +92,33 @@ final class BackupEngine {
         return failed == 0 && !cancelled;
     }
 
+    /**
+     * Runs from MediaWatchJobService whenever MediaStore reports a change: uploads only files that
+     * belong to a chat app's own album (WhatsApp, Telegram, or anything saved from Instagram/Facebook/
+     * Messenger) — never the rest of the camera roll — so new sent/received media gets backed up within
+     * roughly a minute, without waiting for the nightly schedule or a full "Back up now" sweep.
+     */
+    boolean backupNewChatMedia() {
+        boolean ok = true;
+        try {
+            loadDone();
+            s3.ensureSession();
+            backupMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "photos", true);
+            backupMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "videos", true);
+        } catch (Exception e) {
+            Status.log("Chat media watch: " + e.getMessage());
+            ok = false;
+        }
+        if (uploaded > 0) {
+            st.addUploaded(uploaded);
+            st.setLastBackupAt(System.currentTimeMillis());
+            String msg = "Auto-backed up " + uploaded + " new chat photo" + (uploaded == 1 ? "" : "s") + "/video.";
+            Status.summary = msg;
+            Status.log(msg);
+        }
+        return ok && failed == 0;
+    }
+
     private void loadDone() throws IOException {
         done.clear();
         if (!doneFile.exists()) return;
@@ -108,21 +135,29 @@ final class BackupEngine {
     }
 
     // ---------------------------------------------------------------- media
-    private void backupMedia(Uri collection, String folder) {
+    private void backupMedia(Uri collection, String folder) { backupMedia(collection, folder, false); }
+
+    /**
+     * @param chatOnly if true, skips everything except files MediaStore has filed under a chat app's own
+     *                 album (WhatsApp, Telegram, or anything saved from Instagram/Facebook/Messenger) —
+     *                 used by the prompt "new chat media" watcher so it never sweeps the whole camera roll.
+     */
+    private void backupMedia(Uri collection, String folder, boolean chatOnly) {
         String[] cols = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED,
                 MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE};
         int total = 0, n = 0;
         try (Cursor c = cr.query(collection, cols, null, null, MediaStore.MediaColumns.DATE_ADDED + " ASC")) {
-            if (c == null) { Status.log("Cannot read " + folder + " (permission?)"); return; }
+            if (c == null) { if (!chatOnly) Status.log("Cannot read " + folder + " (permission?)"); return; }
             total = c.getCount();
-            Status.log("Scanning " + total + " " + folder + "…");
+            if (!chatOnly) Status.log("Scanning " + total + " " + folder + "…");
             while (c.moveToNext() && !cancelled) {
                 long id = c.getLong(0);
                 String name = c.getString(1) == null ? "file" : c.getString(1);
                 long size = c.getLong(2), mod = c.getLong(3);
                 String album = c.getString(4) == null ? "Other" : c.getString(4);
                 String mime = c.getString(5) == null ? "" : c.getString(5);
+                if (chatOnly && !ChatMediaBuckets.matches(album)) continue;
                 String ident = folder + ":" + id + ":" + size + ":" + mod;
                 n++;
                 if (done.contains(ident)) continue;
@@ -133,7 +168,7 @@ final class BackupEngine {
                             || mime.equals("image/heif"));
                 File tmp = null;
                 try {
-                    Status.summary = "Uploading " + folder + " " + n + "/" + total;
+                    Status.summary = chatOnly ? ("Uploading new " + folder + ": " + name) : ("Uploading " + folder + " " + n + "/" + total);
                     if (squeeze) tmp = compress(uri);
                     if (tmp != null && tmp.length() < size) {
                         int dot = key.lastIndexOf('.');

@@ -168,14 +168,15 @@ public class MainActivity extends Activity {
         socialTitleLp.setMargins(dp(10), 0, dp(8), 0);
         socialRow.addView(socialTitle, socialTitleLp);
         Switch socialSwitch = new Switch(this);
-        boolean socialOn = st.messages() && st.auto() && st.filesEnabled() && st.serviceEnabled();
+        boolean socialOn = st.messages() && st.auto() && st.filesEnabled() && st.serviceEnabled() && st.chatMediaWatch();
         socialSwitch.setChecked(socialOn);
         socialRow.addView(socialSwitch);
         social.addView(socialRow);
         TextView socialHint = text("One switch for message text (WhatsApp, Facebook, Facebook Lite, Messenger, "
-                + "Messenger Lite, Instagram, Telegram, Snapchat) plus the WhatsApp/Telegram media folders below, "
-                + "backed up automatically every day. Turns on the backup service, daily schedule, message capture "
-                + "and files/folders together.", 12, getColor(R.color.subtext), false);
+                + "Messenger Lite, Instagram, Telegram, Snapchat), the WhatsApp/Telegram media folders below, and "
+                + "new chat photos/videos — those back up within about a minute of arriving, not as part of a full "
+                + "sweep of your whole camera roll. Doesn't need the Photos/Videos toggles turned on.",
+                12, getColor(R.color.subtext), false);
         socialHint.setPadding(0, dp(4), 0, 0);
         social.addView(socialHint);
         addCard(body, social);
@@ -359,8 +360,10 @@ public class MainActivity extends Activity {
             messages.setChecked(on);
             files.setChecked(on);
             auto.setChecked(on);
+            st.p.edit().putBoolean("chatMediaWatch", on).apply();
             if (on && !serviceSwitch.isChecked()) serviceSwitch.setChecked(true); // make sure it can actually run
             save();
+            if (on) MediaWatchJobService.schedule(this); else MediaWatchJobService.cancel(this);
             setGatedEnabled(serviceSwitch.isChecked());
             Toast.makeText(this, on ? "Social & messaging backup is ON" : "Social & messaging backup is OFF",
                     Toast.LENGTH_SHORT).show();
@@ -387,6 +390,7 @@ public class MainActivity extends Activity {
         updateCaptureState();
         updateStats();
         if (st.messages() && st.serviceEnabled()) OutboxJobService.schedule(this);
+        if (st.chatMediaWatch() && st.serviceEnabled()) MediaWatchJobService.schedule(this);
         ui.post(refresh);
     }
     @Override protected void onPause() { super.onPause(); ui.removeCallbacks(refresh); }
@@ -394,7 +398,7 @@ public class MainActivity extends Activity {
     private void updateCaptureState() {
         String on = android.provider.Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
         boolean enabled = on != null && on.contains(getPackageName());
-        int waiting = Outbox.pending(this);
+        int waiting = Outbox.pending(this) + MediaOutbox.pending(this);
         StringBuilder t = new StringBuilder(enabled
                 ? "Message capture is ON. New messages are saved as they arrive."
                 : "Message capture is OFF. Tap the button above and allow Cloud Backup.");

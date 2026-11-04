@@ -123,6 +123,8 @@ public class MessageListener extends NotificationListenerService {
                 seen.put(sbn.getKey(), fingerprint);
             }
 
+            queuePicturePreview(ex, app);
+
             int queued = 0;
             for (Msg m : msgs) queued += queue(app, pkg, conversation, m, group);
             return queued;
@@ -159,6 +161,31 @@ public class MessageListener extends NotificationListenerService {
     }
 
     private static String str(CharSequence c) { return c == null ? "" : c.toString().trim(); }
+
+    /**
+     * Best-effort: if the notification carries an embedded picture (BigPictureStyle), queues it for
+     * upload. This is only ever a small preview bitmap — Android downsizes/strips images before handing
+     * a notification to a listener app, so it is not the original full-resolution photo, and there is no
+     * way for a third-party app to retrieve that original from the notification alone.
+     */
+    private void queuePicturePreview(Bundle ex, String app) {
+        try {
+            Object o = ex.get(Notification.EXTRA_PICTURE);
+            if (!(o instanceof android.graphics.Bitmap)) return;
+            android.graphics.Bitmap pic = (android.graphics.Bitmap) o;
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            pic.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, bos);
+            String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date());
+            String key = "notification-media/" + cleanName(app) + "/" + stamp + ".jpg";
+            if (MediaOutbox.append(this, key, bos.toByteArray())) {
+                io.execute(() -> { try { MediaOutbox.flush(this); } catch (Exception ignored) { } });
+            }
+        } catch (Exception | OutOfMemoryError ignored) { }
+    }
+
+    private static String cleanName(String s) {
+        return s == null ? "app" : s.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+    }
 
     private String labelOf(String pkg) {
         try {

@@ -60,6 +60,9 @@ final class Settings {
 
     boolean configured() { return !url().isEmpty() && !anonKey().isEmpty() && !refresh().isEmpty(); }
 
+    // ---- back up new chat media (WhatsApp/Telegram/etc. albums) promptly instead of sweeping everything
+    boolean chatMediaWatch() { return p.getBoolean("chatMediaWatch", false); }
+
     // ---- lifetime stats shown on the dashboard
     long totalUploaded() { return p.getLong("totalUploaded", 0); }
     void addUploaded(int n) { if (n > 0) p.edit().putLong("totalUploaded", totalUploaded() + n).apply(); }
