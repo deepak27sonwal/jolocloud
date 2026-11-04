@@ -37,7 +37,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int REQ_PICK_FOLDER = 10, REQ_PICK_FILES = 11;
     private EditText url, anon, email, password;
-    private Switch photos, videos, contacts, auto, compress, lossless, messages, files;
+    private Switch photos, videos, contacts, auto, compress, lossless, compressVideo, messages, files;
     private TextView summary, log, listenerState, statsText;
     private Button pinButton, removePinButton, timeButton, addFolderBtn, addFilesBtn;
     private LinearLayout filesListContainer;
@@ -257,6 +257,17 @@ public class MainActivity extends Activity {
         what.addView(losslessRow);
 
         videos = toggleRow(what, R.drawable.ic_video, "Videos", st.videos());
+        LinearLayout vidCompressRow = new LinearLayout(this);
+        vidCompressRow.setOrientation(LinearLayout.HORIZONTAL);
+        vidCompressRow.setGravity(Gravity.CENTER_VERTICAL);
+        vidCompressRow.setPadding(dp(30), 0, 0, dp(8));
+        compressVideo = new Switch(this);
+        compressVideo.setChecked(st.compressVideo());
+        TextView vidCompressLabel = text("Compress videos (experimental — same resolution, smaller file; "
+                + "falls back to the original if anything goes wrong)", 11, getColor(R.color.subtext), false);
+        vidCompressRow.addView(vidCompressLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        vidCompressRow.addView(compressVideo);
+        what.addView(vidCompressRow);
         contacts = toggleRow(what, R.drawable.ic_person, "Contacts", st.contacts());
 
         messages = toggleRow(what, R.drawable.ic_message, "Messages (captured from notifications)", st.messages());
@@ -361,7 +372,7 @@ public class MainActivity extends Activity {
         addCard(body, filesCard);
 
         gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton,
-                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn, waVidBtn, waBizVidBtn, tgBtn, lossless};
+                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn, waVidBtn, waBizVidBtn, tgBtn, lossless, compressVideo};
         setGatedEnabled(st.serviceEnabled());
         serviceSwitch.setOnCheckedChangeListener((v, on) -> {
             st.p.edit().putBoolean("serviceEnabled", on).apply();
@@ -463,6 +474,7 @@ public class MainActivity extends Activity {
                 .putBoolean("photos", photos.isChecked())
                 .putBoolean("compress", compress.isChecked())
                 .putBoolean("losslessWebp", lossless.isChecked())
+                .putBoolean("compressVideo", compressVideo.isChecked())
                 .putBoolean("videos", videos.isChecked())
                 .putBoolean("contacts", contacts.isChecked())
                 .putBoolean("messages", messages.isChecked())

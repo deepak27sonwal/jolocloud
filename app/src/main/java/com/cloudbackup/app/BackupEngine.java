@@ -166,15 +166,19 @@ final class BackupEngine {
                 boolean squeeze = folder.equals("photos") && st.compress()
                         && (mime.equals("image/jpeg") || mime.equals("image/png") || mime.equals("image/heic")
                             || mime.equals("image/heif"));
+                boolean shrinkVideo = folder.equals("videos") && st.compressVideo() && mime.startsWith("video/");
                 File tmp = null;
                 try {
                     Status.summary = chatOnly ? ("Uploading new " + folder + ": " + name) : ("Uploading " + folder + " " + n + "/" + total);
                     if (squeeze) tmp = compress(uri);
+                    else if (shrinkVideo) tmp = VideoTranscoder.compress(ctx, cr, uri, size);
                     if (tmp != null && tmp.length() < size) {
                         int dot = key.lastIndexOf('.');
-                        String wkey = (dot > key.lastIndexOf('/') ? key.substring(0, dot) : key) + ".webp";
+                        String outExt = squeeze ? ".webp" : ".mp4";
+                        String outMime = squeeze ? "image/webp" : "video/mp4";
+                        String wkey = (dot > key.lastIndexOf('/') ? key.substring(0, dot) : key) + outExt;
                         try (InputStream in = new FileInputStream(tmp)) {
-                            s3.put(wkey, in, tmp.length(), "image/webp");
+                            s3.put(wkey, in, tmp.length(), outMime);
                         }
                         bytesSent += tmp.length();
                     } else {

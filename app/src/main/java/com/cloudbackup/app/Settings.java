@@ -24,6 +24,8 @@ final class Settings {
     boolean compress() { return p.getBoolean("compress", true); }
     // true lossless WebP (Android 11+); zero quality loss, but much less size reduction than the default
     boolean losslessWebp() { return p.getBoolean("losslessWebp", false); }
+    // experimental, opt-in: re-encode videos to a lower bitrate at the same resolution (see VideoTranscoder)
+    boolean compressVideo() { return p.getBoolean("compressVideo", false); }
     boolean auto()     { return p.getBoolean("auto", false); }
 
     // ---- master on/off switch for everything that runs in the background (auto backup + message capture)
