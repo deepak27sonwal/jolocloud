@@ -22,6 +22,8 @@ final class Settings {
     boolean contacts() { return p.getBoolean("contacts", true); }
     boolean messages() { return p.getBoolean("messages", true); }
     boolean compress() { return p.getBoolean("compress", true); }
+    // true lossless WebP (Android 11+); zero quality loss, but much less size reduction than the default
+    boolean losslessWebp() { return p.getBoolean("losslessWebp", false); }
     boolean auto()     { return p.getBoolean("auto", false); }
 
     // ---- master on/off switch for everything that runs in the background (auto backup + message capture)

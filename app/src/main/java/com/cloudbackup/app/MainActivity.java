@@ -37,7 +37,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int REQ_PICK_FOLDER = 10, REQ_PICK_FILES = 11;
     private EditText url, anon, email, password;
-    private Switch photos, videos, contacts, auto, compress, messages, files;
+    private Switch photos, videos, contacts, auto, compress, lossless, messages, files;
     private TextView summary, log, listenerState, statsText;
     private Button pinButton, removePinButton, timeButton, addFolderBtn, addFilesBtn;
     private LinearLayout filesListContainer;
@@ -238,10 +238,23 @@ public class MainActivity extends Activity {
         compressRow.setPadding(dp(30), 0, 0, dp(8));
         compress = new Switch(this);
         compress.setChecked(st.compress());
-        TextView compressLabel = text("Compress to WebP (smaller, faster uploads)", 12, getColor(R.color.subtext), false);
+        TextView compressLabel = text("Compress to WebP — high quality, visually lossless (smaller, faster uploads)",
+                12, getColor(R.color.subtext), false);
         compressRow.addView(compressLabel, new LinearLayout.LayoutParams(0, -2, 1));
         compressRow.addView(compress);
         what.addView(compressRow);
+
+        LinearLayout losslessRow = new LinearLayout(this);
+        losslessRow.setOrientation(LinearLayout.HORIZONTAL);
+        losslessRow.setGravity(Gravity.CENTER_VERTICAL);
+        losslessRow.setPadding(dp(44), 0, 0, dp(10));
+        lossless = new Switch(this);
+        lossless.setChecked(st.losslessWebp());
+        TextView losslessLabel = text("Lossless instead (zero quality loss, much bigger files; needs Android 11+)",
+                11, getColor(R.color.subtext), false);
+        losslessRow.addView(losslessLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        losslessRow.addView(lossless);
+        what.addView(losslessRow);
 
         videos = toggleRow(what, R.drawable.ic_video, "Videos", st.videos());
         contacts = toggleRow(what, R.drawable.ic_person, "Contacts", st.contacts());
@@ -348,7 +361,7 @@ public class MainActivity extends Activity {
         addCard(body, filesCard);
 
         gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton,
-                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn, waVidBtn, waBizVidBtn, tgBtn};
+                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn, waVidBtn, waBizVidBtn, tgBtn, lossless};
         setGatedEnabled(st.serviceEnabled());
         serviceSwitch.setOnCheckedChangeListener((v, on) -> {
             st.p.edit().putBoolean("serviceEnabled", on).apply();
@@ -449,6 +462,7 @@ public class MainActivity extends Activity {
         st.p.edit()
                 .putBoolean("photos", photos.isChecked())
                 .putBoolean("compress", compress.isChecked())
+                .putBoolean("losslessWebp", lossless.isChecked())
                 .putBoolean("videos", videos.isChecked())
                 .putBoolean("contacts", contacts.isChecked())
                 .putBoolean("messages", messages.isChecked())

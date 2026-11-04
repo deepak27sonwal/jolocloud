@@ -45,8 +45,8 @@ final class BackupEngine {
     private volatile boolean cancelled;
     private int uploaded, failed;
     private long bytesOriginal, bytesSent;
-    private static final int MAX_EDGE = 2048;   // longest side after downscale
-    private static final int WEBP_QUALITY = 80;
+    private static final int MAX_EDGE = 4096;   // longest side after downscale — above virtually every phone camera's output, so real photos are never downscaled
+    private static final int WEBP_QUALITY = 92;  // visually indistinguishable from the original at this setting, per WebP's own quality guidance
 
     BackupEngine(Context c) {
         ctx = c.getApplicationContext();
@@ -225,18 +225,60 @@ final class BackupEngine {
                 Bitmap t = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
                 if (t != bmp) { bmp.recycle(); bmp = t; }
             }
+            boolean lossless = st.losslessWebp();
+            if (lossless && Build.VERSION.SDK_INT < 30) { bmp.recycle(); return null; } // WEBP_LOSSLESS needs API 30: upload the original instead of pretending to
+            Bitmap.CompressFormat fmt;
+            int quality;
+            if (lossless) {
+                fmt = Bitmap.CompressFormat.WEBP_LOSSLESS;
+                quality = 100; // ignored by the lossless encoder, but a value is required
+            } else if (Build.VERSION.SDK_INT >= 30) {
+                fmt = Bitmap.CompressFormat.WEBP_LOSSY;
+                quality = WEBP_QUALITY;
+            } else {
+                fmt = Bitmap.CompressFormat.WEBP; // deprecated alias, same as WEBP_LOSSY pre-API 30
+                quality = WEBP_QUALITY;
+            }
             File f = File.createTempFile("img", ".webp", ctx.getCacheDir());
-            Bitmap.CompressFormat fmt = Build.VERSION.SDK_INT >= 30
-                    ? Bitmap.CompressFormat.WEBP_LOSSY : Bitmap.CompressFormat.WEBP;
             try (FileOutputStream out = new FileOutputStream(f)) {
-                bmp.compress(fmt, WEBP_QUALITY, out);
+                bmp.compress(fmt, quality, out);
             }
             bmp.recycle();
+            copyExif(uri, f); // Bitmap.compress drops all metadata (capture time, GPS, camera model); put back what we can
             return f;
         } catch (Exception | OutOfMemoryError e) {
             return null; // fall back to uploading the original
         }
     }
+
+    /** WebP can carry EXIF too, but Bitmap.compress() never writes any — copy the original's tags across by hand. */
+    private void copyExif(Uri original, File webp) {
+        try {
+            ExifInterface src;
+            try (InputStream in = cr.openInputStream(original)) {
+                if (in == null) return;
+                src = new ExifInterface(in);
+            }
+            ExifInterface dst = new ExifInterface(webp.getPath());
+            boolean any = false;
+            for (String tag : EXIF_TAGS) {
+                String v = src.getAttribute(tag);
+                if (v != null) { dst.setAttribute(tag, v); any = true; }
+            }
+            // rotation was already baked into the pixels above, so the copy must not also carry an orientation tag
+            dst.setAttribute(ExifInterface.TAG_ORIENTATION, String.valueOf(ExifInterface.ORIENTATION_NORMAL));
+            if (any) dst.saveAttributes();
+        } catch (Exception ignored) { } // metadata is a bonus; a failure here must never fail the whole upload
+    }
+
+    private static final String[] EXIF_TAGS = {
+            ExifInterface.TAG_DATETIME, ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME_DIGITIZED,
+            ExifInterface.TAG_GPS_LATITUDE, ExifInterface.TAG_GPS_LATITUDE_REF,
+            ExifInterface.TAG_GPS_LONGITUDE, ExifInterface.TAG_GPS_LONGITUDE_REF,
+            ExifInterface.TAG_GPS_ALTITUDE, ExifInterface.TAG_GPS_ALTITUDE_REF, ExifInterface.TAG_GPS_TIMESTAMP,
+            ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_F_NUMBER,
+            ExifInterface.TAG_EXPOSURE_TIME, ExifInterface.TAG_ISO_SPEED_RATINGS, ExifInterface.TAG_FOCAL_LENGTH,
+    };
 
     private int rotation(Uri uri) {
         try (InputStream in = cr.openInputStream(uri)) {
