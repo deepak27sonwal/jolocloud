@@ -154,6 +154,32 @@ public class MainActivity extends Activity {
         dash.addView(logFrame, logLp);
         addCard(body, dash);
 
+        // ---------------------------------------------------------------- social & messaging backup (one switch)
+        LinearLayout social = card();
+        LinearLayout socialRow = new LinearLayout(this);
+        socialRow.setOrientation(LinearLayout.HORIZONTAL);
+        socialRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView socialIcon = new ImageView(this);
+        socialIcon.setImageResource(R.drawable.ic_message);
+        socialIcon.setColorFilter(getColor(R.color.primary));
+        socialRow.addView(socialIcon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+        TextView socialTitle = text("Social & messaging auto-backup", 15, getColor(R.color.text), true);
+        LinearLayout.LayoutParams socialTitleLp = new LinearLayout.LayoutParams(0, -2, 1);
+        socialTitleLp.setMargins(dp(10), 0, dp(8), 0);
+        socialRow.addView(socialTitle, socialTitleLp);
+        Switch socialSwitch = new Switch(this);
+        boolean socialOn = st.messages() && st.auto() && st.filesEnabled() && st.serviceEnabled();
+        socialSwitch.setChecked(socialOn);
+        socialRow.addView(socialSwitch);
+        social.addView(socialRow);
+        TextView socialHint = text("One switch for message text (WhatsApp, Facebook, Facebook Lite, Messenger, "
+                + "Messenger Lite, Instagram, Telegram, Snapchat) plus the WhatsApp/Telegram media folders below, "
+                + "backed up automatically every day. Turns on the backup service, daily schedule, message capture "
+                + "and files/folders together.", 12, getColor(R.color.subtext), false);
+        socialHint.setPadding(0, dp(4), 0, 0);
+        social.addView(socialHint);
+        addCard(body, social);
+
         // ---------------------------------------------------------------- account card
         LinearLayout acct = card();
         sectionHeader(acct, R.drawable.ic_person, "Account");
@@ -278,12 +304,40 @@ public class MainActivity extends Activity {
         Button waBizBtn = outlineButton(waRow, "WhatsApp Business photos");
         waBizBtn.setOnClickListener(v -> pickAppMediaFolder("com.whatsapp.w4b", "WhatsApp Business", "WhatsApp Business Images"));
         filesCard.addView(waRow);
-        TextView waHint = text("Covers both sent and received photos — WhatsApp keeps them in one folder. "
+
+        LinearLayout waVidRow = new LinearLayout(this);
+        waVidRow.setOrientation(LinearLayout.HORIZONTAL);
+        waVidRow.setPadding(dp(30), 0, 0, dp(8));
+        Button waVidBtn = outlineButton(waVidRow, "🎥 WhatsApp videos");
+        waVidBtn.setOnClickListener(v -> pickAppMediaFolder("com.whatsapp", "WhatsApp", "WhatsApp Video"));
+        ((LinearLayout.LayoutParams) waVidBtn.getLayoutParams()).setMargins(0, 0, dp(8), 0);
+        Button waBizVidBtn = outlineButton(waVidRow, "WhatsApp Business videos");
+        waBizVidBtn.setOnClickListener(v -> pickAppMediaFolder("com.whatsapp.w4b", "WhatsApp Business", "WhatsApp Business Video"));
+        filesCard.addView(waVidRow);
+        TextView waHint = text("Covers both sent and received — WhatsApp keeps them in one folder either way. "
                 + "Tap “Use this folder” / “Allow” on the screen that opens; if it doesn’t land in the "
                 + "right place, browse to Internal storage → Android → media → com.whatsapp → WhatsApp → "
-                + "Media → WhatsApp Images.", 11, getColor(R.color.subtext), false);
+                + "Media → (the matching folder).", 11, getColor(R.color.subtext), false);
         waHint.setPadding(dp(30), 0, 0, dp(10));
         filesCard.addView(waHint);
+
+        LinearLayout tgRow = new LinearLayout(this);
+        tgRow.setOrientation(LinearLayout.HORIZONTAL);
+        tgRow.setPadding(dp(30), 0, 0, dp(8));
+        Button tgBtn = outlineButton(tgRow, "✈️ Telegram media (photos, video, docs)");
+        tgBtn.setOnClickListener(v -> pickAppFolder("org.telegram.messenger", "Telegram"));
+        filesCard.addView(tgRow);
+        TextView tgHint = text("Picks Telegram's whole media folder, which already keeps Images, Video and "
+                + "Documents separately — this one covers all of them at once.", 11, getColor(R.color.subtext), false);
+        tgHint.setPadding(dp(30), 0, 0, dp(10));
+        filesCard.addView(tgHint);
+
+        TextView mediaLimits = text("Instagram, Facebook, Facebook Lite, Messenger, Messenger Lite and Snapchat don't save "
+                + "chat photos/videos to a folder any backup app can reach — Snapchat in particular is built not to keep "
+                + "received content at all. Their message text is still captured above.",
+                11, getColor(R.color.warn), false);
+        mediaLimits.setPadding(dp(30), dp(4), 0, dp(10));
+        filesCard.addView(mediaLimits);
 
         filesListContainer = new LinearLayout(this);
         filesListContainer.setOrientation(LinearLayout.VERTICAL);
@@ -293,13 +347,23 @@ public class MainActivity extends Activity {
         addCard(body, filesCard);
 
         gatedByService = new View[]{photos, compress, videos, contacts, messages, access, battery, auto, timeButton,
-                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn};
+                files, addFolderBtn, addFilesBtn, waBtn, waBizBtn, waVidBtn, waBizVidBtn, tgBtn};
         setGatedEnabled(st.serviceEnabled());
         serviceSwitch.setOnCheckedChangeListener((v, on) -> {
             st.p.edit().putBoolean("serviceEnabled", on).apply();
             setGatedEnabled(on);
             save();
             Toast.makeText(this, on ? "Backup service is ON" : "Backup service is OFF", Toast.LENGTH_SHORT).show();
+        });
+        socialSwitch.setOnCheckedChangeListener((v, on) -> {
+            messages.setChecked(on);
+            files.setChecked(on);
+            auto.setChecked(on);
+            if (on && !serviceSwitch.isChecked()) serviceSwitch.setChecked(true); // make sure it can actually run
+            save();
+            setGatedEnabled(serviceSwitch.isChecked());
+            Toast.makeText(this, on ? "Social & messaging backup is ON" : "Social & messaging backup is OFF",
+                    Toast.LENGTH_SHORT).show();
         });
 
         // ---------------------------------------------------------------- app lock card
@@ -473,9 +537,15 @@ public class MainActivity extends Activity {
      * user then just browses there manually, same as the plain "Add folder" button.
      */
     private void pickAppMediaFolder(String pkg, String appFolderName, String mediaSubfolder) {
+        pickAppFolder(pkg, appFolderName + "/Media/" + mediaSubfolder);
+    }
+
+    /** Same pre-navigation trick, but with full control over the path after Android/media/&lt;pkg&gt;/ —
+     *  not every app nests its media folders the same way WhatsApp does. */
+    private void pickAppFolder(String pkg, String relativePath) {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         try {
-            String docId = "primary:Android/media/" + pkg + "/" + appFolderName + "/Media/" + mediaSubfolder;
+            String docId = "primary:Android/media/" + pkg + "/" + relativePath;
             Uri hint = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", docId);
             i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, hint);
         } catch (Exception ignored) { } // no hint: the picker just opens at its usual starting point

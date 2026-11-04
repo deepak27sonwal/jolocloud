@@ -14,8 +14,10 @@ final class AppCatalog {
     static {
         add("WhatsApp", "com.whatsapp");
         add("WhatsApp Business", "com.whatsapp.w4b");
-        add("Facebook", "com.facebook.katana", "com.facebook.lite");
-        add("Messenger", "com.facebook.orca", "com.facebook.mlite");
+        add("Facebook", "com.facebook.katana");
+        add("Facebook Lite", "com.facebook.lite");
+        add("Messenger", "com.facebook.orca");
+        add("Messenger Lite", "com.facebook.mlite");
         add("Instagram", "com.instagram.android", "com.instagram.lite");
         add("Telegram", "org.telegram.messenger", "org.telegram.messenger.web", "org.telegram.plus",
                 "org.thunderdog.challegram");
@@ -30,5 +32,6 @@ final class AppCatalog {
     /** Friendly app name, or null if the package is not one of the listed apps. */
     static String nameOf(String pkg) { return NAMES.get(pkg); }
 
-    static final String SUMMARY = "WhatsApp, WhatsApp Business, Facebook, Messenger, Instagram, Telegram, Snapchat, Gmail and SMS apps";
+    static final String SUMMARY = "WhatsApp, WhatsApp Business, Facebook, Facebook Lite, Messenger, Messenger Lite, "
+            + "Instagram, Telegram, Snapchat, Gmail and SMS apps";
 }
